@@ -12,10 +12,6 @@
 #define OBJZ_STRICMP strcasecmp
 #endif
 
-#ifndef OBJZ_DEBUG_ASSERT
-#define OBJZ_DEBUG_ASSERT assert
-#endif
-
 #define OBJZ_MAX_ERROR_LENGTH 1024
 #define OBJZ_MAX_TOKEN_LENGTH 256
 
@@ -37,22 +33,18 @@ static void objz_initLexer(Lexer *_lexer, char *_buf) {
 }
 
 static bool objz_isEol(const Lexer *_lexer) {
-	OBJZ_DEBUG_ASSERT(_lexer);
 	return (_lexer->buf[0] == '\n' || (_lexer->buf[0] == '\r' && _lexer->buf[1] != '\n'));
 }
 
 static bool objz_isEof(const Lexer *_lexer) {
-	OBJZ_DEBUG_ASSERT(_lexer);
 	return (_lexer->buf[0] == 0);
 }
 
 static bool objz_isWhitespace(const Lexer *_lexer) {
-	OBJZ_DEBUG_ASSERT(_lexer);
 	return (_lexer->buf[0] == ' ' || _lexer->buf[0] == '\t' || _lexer->buf[0] == '\r');
 }
 
 static void objz_skipLine(Lexer *_lexer) {
-	OBJZ_DEBUG_ASSERT(_lexer);
 	for (;;) {
 		if (objz_isEof(_lexer))
 			break;
@@ -68,7 +60,6 @@ static void objz_skipLine(Lexer *_lexer) {
 }
 
 static void objz_skipWhitespace(Lexer *_lexer) {
-	OBJZ_DEBUG_ASSERT(_lexer);
 	for (;;) {
 		if (objz_isEof(_lexer))
 			break;
@@ -80,8 +71,6 @@ static void objz_skipWhitespace(Lexer *_lexer) {
 }
 
 static void objz_tokenize(Lexer *_lexer, Token *_token, bool includeWhitespace) {
-	OBJZ_DEBUG_ASSERT(_lexer);
-	OBJZ_DEBUG_ASSERT(_token);
 	int i = 0;
 	objz_skipWhitespace(_lexer);
 	_token->line = _lexer->line;
@@ -97,8 +86,6 @@ static void objz_tokenize(Lexer *_lexer, Token *_token, bool includeWhitespace) 
 }
 
 static bool objz_parseFloats(Lexer *_lexer, float *_result, int n) {
-	OBJZ_DEBUG_ASSERT(_lexer);
-	OBJZ_DEBUG_ASSERT(_result);
 	Token token;
 	for (int i = 0; i < n; i++) {
 		objz_tokenize(_lexer, &token, false);
@@ -112,8 +99,6 @@ static bool objz_parseFloats(Lexer *_lexer, float *_result, int n) {
 }
 
 static bool objz_parseInt(Lexer *_lexer, int *_result) {
-	OBJZ_DEBUG_ASSERT(_lexer);
-	OBJZ_DEBUG_ASSERT(_result);
 	Token token;
 	objz_tokenize(_lexer, &token, false);
 	if (strlen(token.text) == 0) {
@@ -125,8 +110,6 @@ static bool objz_parseInt(Lexer *_lexer, int *_result) {
 }
 
 static bool objz_parseFace(Lexer *_lexer, int *_face, int *_n) {
-	OBJZ_DEBUG_ASSERT(_lexer);
-	OBJZ_DEBUG_ASSERT(_face);
 	Token token;
 	*_n = 0;
 	for (int i = 0; i < 4; i++) {
@@ -154,6 +137,34 @@ static bool objz_parseFace(Lexer *_lexer, int *_face, int *_n) {
 error:
 	snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Failed to parse face", token.line, token.column);
 	return false;
+}
+
+typedef struct {
+	uint8_t *data;
+	size_t length;
+	size_t capacity;
+	size_t initialSize;
+} Array;
+
+static void objz_initArray(Array *_array, size_t _initialSize) {
+	_array->data = NULL;
+	_array->length = _array->capacity = 0;
+	_array->initialSize = _initialSize;
+}
+
+static void objz_appendArray(Array *_array, void *_object, size_t _objectSize) {
+	if (!_array->data) {
+		_array->data = malloc(_objectSize * _array->initialSize);
+		_array->capacity = _array->initialSize;
+	} else if (_array->length == _array->capacity) {
+		const void *oldData = _array->data;
+		const size_t oldCapacity = _array->capacity;
+		_array->capacity *= 2;
+		_array->data = realloc(_array->data, _array->capacity * _objectSize);
+		memcpy(_array->data, oldData, oldCapacity * _objectSize);
+	}
+	memcpy(&_array->data[_array->length * _objectSize], _object, _objectSize);
+	_array->length++;
 }
 
 static char *objz_readFile(const char *_filename) {
@@ -192,39 +203,24 @@ typedef struct {
 } MaterialTokenDef;
 
 static MaterialTokenDef s_materialTokens[] = {
-	{ "d", OBJZ_MAT_TOKEN_FLOAT, offsetof(Material, d), 1 },
-	{ "illum", OBJZ_MAT_TOKEN_INT, offsetof(Material, illum), 1 },
-	{ "Ka", OBJZ_MAT_TOKEN_FLOAT, offsetof(Material, Ka), 3 },
-	{ "Kd", OBJZ_MAT_TOKEN_FLOAT, offsetof(Material, Kd), 3 },
-	{ "Ke", OBJZ_MAT_TOKEN_FLOAT, offsetof(Material, Ke), 3 },
-	{ "Ks", OBJZ_MAT_TOKEN_FLOAT, offsetof(Material, Ks), 3 },
-	{ "Ni", OBJZ_MAT_TOKEN_FLOAT, offsetof(Material, Ni), 1 },
-	{ "Ns", OBJZ_MAT_TOKEN_FLOAT, offsetof(Material, Ns), 1 },
-	{ "map_Bump", OBJZ_MAT_TOKEN_STRING, offsetof(Material, map_Bump), 1 },
-	{ "map_Ka", OBJZ_MAT_TOKEN_STRING, offsetof(Material, map_Ka), 1 },
-	{ "map_Kd", OBJZ_MAT_TOKEN_STRING, offsetof(Material, map_Kd), 1 }
+	{ "d", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, d), 1 },
+	{ "illum", OBJZ_MAT_TOKEN_INT, offsetof(objzMaterial, illum), 1 },
+	{ "Ka", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, Ka), 3 },
+	{ "Kd", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, Kd), 3 },
+	{ "Ke", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, Ke), 3 },
+	{ "Ks", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, Ks), 3 },
+	{ "Ni", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, Ni), 1 },
+	{ "Ns", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, Ns), 1 },
+	{ "map_Bump", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, map_Bump), 1 },
+	{ "map_Ka", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, map_Ka), 1 },
+	{ "map_Kd", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, map_Kd), 1 }
 };
 
-static void objz_printMaterial(const Material *_mat) {
-	printf("Material %s\n", _mat->name);
-	printf("   d: %g\n", _mat->d);
-	printf("   illum: %d\n", _mat->illum);
-	printf("   Ka: %g %g %g\n", _mat->Ka[0], _mat->Ka[1], _mat->Ka[2]);
-	printf("   Kd: %g %g %g\n", _mat->Kd[0], _mat->Kd[1], _mat->Kd[2]);
-	printf("   Ke: %g %g %g\n", _mat->Ke[0], _mat->Ke[1], _mat->Ke[2]);
-	printf("   Ks: %g %g %g\n", _mat->Ks[0], _mat->Ks[1], _mat->Ks[2]);
-	printf("   Ni: %g\n", _mat->Ni);
-	printf("   Ns: %g\n", _mat->Ns);
-	printf("   map_Bump: %s\n", _mat->map_Bump);
-	printf("   map_Ka: %s\n", _mat->map_Ka);
-	printf("   map_Kd: %s\n", _mat->map_Kd);
-}
-
-static void objz_initMaterial(Material *_mat) {
+static void objz_initMaterial(objzMaterial *_mat) {
 	memset(_mat, 0, sizeof(*_mat));
 }
 
-static int objz_loadMaterial(const char *_objFilename, const char *_materialName) {
+static int objz_loadMaterialFile(const char *_objFilename, const char *_materialName, Array *_materials) {
 	char filename[256] = { 0 };
 	const char *lastSlash = strrchr(_objFilename, '/');
 	if (!lastSlash)
@@ -245,7 +241,7 @@ static int objz_loadMaterial(const char *_objFilename, const char *_materialName
 	Lexer lexer;
 	objz_initLexer(&lexer, buffer);
 	Token token;
-	Material mat;
+	objzMaterial mat;
 	objz_initMaterial(&mat);
 	for (;;) {
 		objz_tokenize(&lexer, &token, false);
@@ -259,7 +255,7 @@ static int objz_loadMaterial(const char *_objFilename, const char *_materialName
 				goto cleanup;
 			}
 			if (mat.name[0] != 0)
-				objz_printMaterial(&mat);
+				objz_appendArray(_materials, &mat, sizeof(mat));
 			objz_initMaterial(&mat);
 			strncpy(mat.name, token.text, OBJZ_NAME_MAX);
 		} else {
@@ -288,18 +284,20 @@ static int objz_loadMaterial(const char *_objFilename, const char *_materialName
 		objz_skipLine(&lexer);
 	}
 	if (mat.name[0] != 0)
-		objz_printMaterial(&mat);
+		objz_appendArray(_materials, &mat, sizeof(mat));
 	result = 1;
 cleanup:
 	free(buffer);
 	return result;
 }
 
-int objz_load(const char *_filename) {
-	int result = -1;
+objzOutput *objz_load(const char *_filename) {
+	objzOutput *output = NULL;
 	char *buffer = objz_readFile(_filename);
 	if (!buffer)
 		goto cleanup;
+	Array materials;
+	objz_initArray(&materials, 8);
 	Lexer lexer;
 	objz_initLexer(&lexer, buffer);
 	Token token;
@@ -321,8 +319,7 @@ int objz_load(const char *_filename) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'mtllib'", token.line, token.column);
 				goto cleanup;
 			}
-			printf("Material lib: %s\n", token.text);
-			if (!objz_loadMaterial(_filename, token.text))
+			if (!objz_loadMaterialFile(_filename, token.text, &materials))
 				goto cleanup;
 		} else if (OBJZ_STRICMP(token.text, "o") == 0) {
 			objz_tokenize(&lexer, &token, false);
@@ -354,13 +351,22 @@ int objz_load(const char *_filename) {
 		}
 		objz_skipLine(&lexer);
 	}
-	result = 1;
+	output = malloc(sizeof(objzOutput));
+	memset(output, 0, sizeof(*output));
+	output->materials = (objzMaterial *)materials.data;
+	output->numMaterials = (uint32_t)materials.length;
 cleanup:
 	free(buffer);
-	return result;
+	return output;
 }
 
-const char *objz_getError()
-{
+void objz_destroy(objzOutput *_output) {
+	if (!_output)
+		return;
+	free(_output->materials);
+	free(_output);
+}
+
+const char *objz_getError() {
 	return s_error;
 }

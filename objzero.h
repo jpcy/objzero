@@ -7,9 +7,7 @@
 extern "C" {
 #endif
 
-#ifndef OBJZ_NAME_MAX
 #define OBJZ_NAME_MAX 64
-#endif OBJZ_NAME_MAX
 
 typedef struct {
 	char name[OBJZ_NAME_MAX];
@@ -24,9 +22,15 @@ typedef struct {
 	char map_Bump[OBJZ_NAME_MAX];
 	char map_Ka[OBJZ_NAME_MAX];
 	char map_Kd[OBJZ_NAME_MAX];
-} Material;
+} objzMaterial;
 
-int objz_load(const char *_filename);
+typedef struct {
+	objzMaterial *materials;
+	uint32_t numMaterials;
+} objzOutput;
+
+objzOutput *objz_load(const char *_filename);
+void objz_destroy(objzOutput *_output);
 const char *objz_getError();
 
 #ifdef __cplusplus
