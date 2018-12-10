@@ -9,14 +9,14 @@
 #define OBJZ_FOPEN(file, filename, mode) { if (fopen_s(&file, filename, mode) != 0) file = NULL; }
 #define OBJZ_STRICMP _stricmp
 #define OBJZ_STRNCAT(dest, destSize, src, count) strncat_s(dest, destSize, src, count)
-#define OBJZ_STRNCPY(dest, destSize, src, count) strncpy_s(dest, destSize, src, count)
+#define OBJZ_STRNCPY(dest, destSize, src) strncpy_s(dest, destSize, src, destSize)
 #define OBJZ_STRTOK(str, delim, context) strtok_s(str, delim, context)
 #else
 #include <strings.h>
 #define OBJZ_FOPEN(file, filename, mode) file = fopen(filename, mode)
 #define OBJZ_STRICMP strcasecmp
 #define OBJZ_STRNCAT(dest, destSize, src, count) strncat(dest, src, count)
-#define OBJZ_STRNCPY(dest, destSize, src, count) strncpy(dest, src, count)
+#define OBJZ_STRNCPY(dest, destSize, src) strncpy(dest, src, destSize)
 #define OBJZ_STRTOK(str, delim, context) strtok(str, delim)
 #endif
 
@@ -244,7 +244,7 @@ static int objz_loadMaterialFile(const char *_objFilename, const char *_material
 		}
 		OBJZ_STRNCAT(filename, sizeof(filename), _materialName, sizeof(filename) - strlen(filename) - 1);
 	} else
-		OBJZ_STRNCPY(filename, sizeof(filename), _materialName, sizeof(filename));
+		OBJZ_STRNCPY(filename, sizeof(filename), _materialName);
 	int result = -1;
 	char *buffer = objz_readFile(filename);
 	if (!buffer)
@@ -268,7 +268,7 @@ static int objz_loadMaterialFile(const char *_objFilename, const char *_material
 			if (mat.name[0] != 0)
 				objz_appendArray(_materials, &mat, sizeof(mat));
 			objz_initMaterial(&mat);
-			OBJZ_STRNCPY(mat.name, sizeof(mat.name), token.text, OBJZ_NAME_MAX);
+			OBJZ_STRNCPY(mat.name, sizeof(mat.name), token.text);
 		} else {
 			for (size_t i = 0; i < sizeof(s_materialTokens) / sizeof(s_materialTokens[0]); i++) {
 				const MaterialTokenDef *mtd = &s_materialTokens[i];
@@ -280,7 +280,7 @@ static int objz_loadMaterialFile(const char *_objFilename, const char *_material
 							snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after '%s'", token.line, token.column, mtd->name);
 							goto cleanup;
 						}
-						OBJZ_STRNCPY((char *)dest, OBJZ_NAME_MAX, token.text, OBJZ_MAX_TOKEN_LENGTH);
+						OBJZ_STRNCPY((char *)dest, OBJZ_NAME_MAX, token.text);
 					} else if (mtd->type == OBJZ_MAT_TOKEN_FLOAT) {
 						if (!objz_parseFloats(&lexer, (float *)dest, mtd->n))
 							goto cleanup;
