@@ -302,14 +302,80 @@ cleanup:
 	return result;
 }
 
+#define OBJZ_VERTEX_HASH_MAP_SLOTS 4096
+
+typedef struct {
+	float pos[3];
+	float texcoord[2];
+	float normal[3];
+} Vertex;
+
+typedef struct {
+	uint32_t pos;
+	uint32_t texcoord;
+	uint32_t normal;
+	uint32_t hashNext; // For hash collisions: next Index with the same hash.
+} Index;
+
+typedef struct {
+	uint32_t slots[OBJZ_VERTEX_HASH_MAP_SLOTS];
+	Array indices;
+	Array vertices;
+	const Array *positions;
+	const Array *texcoords;
+	const Array *normals;
+} VertexHashMap;
+
+void objz_initVertexHashMap(VertexHashMap *_map, const Array *_positions, const Array *_texcoords, const Array *_normals) {
+	for (int i = 0; i < OBJZ_VERTEX_HASH_MAP_SLOTS; i++)
+		_map->slots[i] = UINT32_MAX;
+	objz_initArray(&_map->indices, UINT16_MAX);
+	objz_initArray(&_map->vertices, UINT16_MAX);
+	_map->positions = _positions;
+	_map->texcoords = _texcoords;
+	_map->normals = _normals;
+}
+
+uint32_t objz_hashOrGetVertex(VertexHashMap *_map, uint32_t _pos, uint32_t _texcoord, uint32_t _normal) {
+	// http://www.beosil.com/download/CollisionDetectionHashing_VMV03.pdf
+	const uint32_t hash = ((_pos * 73856093) ^ (_texcoord * 19349663) ^ (_normal * 83492791)) % OBJZ_VERTEX_HASH_MAP_SLOTS;
+	uint32_t i = _map->slots[hash];
+	while (i != UINT32_MAX) {
+		const Index *index = &((const Index *)_map->indices.data)[i];
+		if (index->pos == _pos && index->texcoord == _texcoord && index->normal == _normal)
+			return i;
+		i = index->hashNext;
+	}
+	i = _map->indices.length;
+	_map->slots[hash] = i;
+	Index index;
+	index.pos = _pos;
+	index.texcoord = _texcoord;
+	index.normal = _normal;
+	index.hashNext = UINT32_MAX;
+	objz_appendArray(&_map->indices, &index, sizeof(index));
+	Vertex vertex;
+	memcpy(vertex.pos, &_map->positions->data[i * 3], sizeof(float) * 3);
+	memcpy(vertex.texcoord, &_map->texcoords->data[i * 2], sizeof(float) * 2);
+	memcpy(vertex.normal, &_map->normals->data[i * 3], sizeof(float) * 3);
+	objz_appendArray(&_map->vertices, &vertex, sizeof(vertex));
+	return i;
+}
+
 objzOutput *objz_load(const char *_filename) {
 	objzOutput *output = NULL;
 	char *buffer = objz_readFile(_filename);
 	if (!buffer)
 		goto cleanup;
-	Array materials, objects;
+	Array materials, objects, indices, positions, texcoords, normals;
 	objz_initArray(&materials, 8);
 	objz_initArray(&objects, 8);
+	objz_initArray(&indices, UINT16_MAX);
+	objz_initArray(&positions, UINT16_MAX);
+	objz_initArray(&texcoords, UINT16_MAX);
+	objz_initArray(&normals, UINT16_MAX);
+	VertexHashMap vertexHashMap;
+	objz_initVertexHashMap(&vertexHashMap, &positions, &texcoords, &normals);
 	objzObject *currentObject = NULL;
 	Lexer lexer;
 	objz_initLexer(&lexer, buffer);
@@ -320,12 +386,25 @@ objzOutput *objz_load(const char *_filename) {
 			if (objz_isEof(&lexer))
 				break;
 		} else if (OBJZ_STRICMP(token.text, "f") == 0) {
-			int face[4*3], numVerts;
-			if (!objz_parseFace(&lexer, face, &numVerts))
+			int faceAttribs[4*3], numVerts;
+			if (!objz_parseFace(&lexer, faceAttribs, &numVerts))
 				goto cleanup;
-			/*printf("Face (%d verts):\n", numVerts);
+			uint32_t face[4];
+			for (int i = 0; i < numVerts; i++) {
+				int pos = faceAttribs[i * 3 + 0];
+				if (pos < 0)
+					pos += positions.length;
+				int texcoord = faceAttribs[i * 3 + 1];
+				if (texcoord < 0)
+					texcoord += texcoords.length;
+				int normal = faceAttribs[i * 3 + 2];
+				if (normal < 0)
+					normal += normals.length;
+				face[i] = objz_hashOrGetVertex(&vertexHashMap, (uint32_t)pos, (uint32_t)texcoord, (uint32_t)normal);
+			}
+			printf("Face (%d verts):\n", numVerts);
 			for (int i = 0; i < numVerts; i++)
-				printf("%d %d %d\n", face[i * 3 + 0], face[i * 3 + 1], face[i * 3 + 2]);*/
+				printf("%u\n", face[i]);
 		} else if (OBJZ_STRICMP(token.text, "mtllib") == 0) {
 			objz_tokenize(&lexer, &token, true);
 			if (token.text[0] == 0) {
@@ -359,15 +438,19 @@ objzOutput *objz_load(const char *_filename) {
 			float vertex[3];
 			if (!objz_parseFloats(&lexer, vertex, n))
 				goto cleanup;
-			/*if (OBJZ_STRICMP(token.text, "v") == 0)
-				printf("Vertex: %g %g %g\n", vertex[0], vertex[1], vertex[2]);
+			if (OBJZ_STRICMP(token.text, "v") == 0)
+				objz_appendArray(&positions, vertex, sizeof(float) * 3);
 			else if (OBJZ_STRICMP(token.text, "vn") == 0)
-				printf("Normal: %g %g %g\n", vertex[0], vertex[1], vertex[2]);
+				objz_appendArray(&normals, vertex, sizeof(float) * 3);
 			else if (OBJZ_STRICMP(token.text, "vt") == 0)
-				printf("Texcoord: %g %g\n", vertex[0], vertex[1]);*/
+				objz_appendArray(&texcoords, vertex, sizeof(float) * 2);
 		}
 		objz_skipLine(&lexer);
 	}
+	printf("%u positions\n", positions.length);
+	printf("%u normals\n", normals.length);
+	printf("%u texcoords\n", texcoords.length);
+	printf("%u unique vertices\n", vertexHashMap.vertices.length);
 	output = malloc(sizeof(objzOutput));
 	memset(output, 0, sizeof(*output));
 	output->materials = (objzMaterial *)materials.data;
