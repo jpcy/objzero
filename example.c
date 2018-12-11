@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <time.h>
 #include "objzero.h"
 
 static void printMaterial(const objzMaterial *_mat) {
@@ -21,7 +22,9 @@ int main(int argc, char **argv) {
 		return 0;
 	objzVertexDecl vertexDecl;
 	objz_vertexDeclInit(&vertexDecl);
+	clock_t start = clock();
 	objzOutput *output = objz_load(argv[1], &vertexDecl);
+	clock_t end = clock();
 	if (!output) {
 		printf("ERROR: %s\n", objz_getError());
 		return 1;
@@ -37,6 +40,7 @@ int main(int argc, char **argv) {
 			printf("      %d: '%s' material, %d indices\n", j, mesh->materialIndex < 0 ? "<empty>" : output->materials[mesh->materialIndex].name, mesh->numIndices);
 		}
 	}
+	printf("%g milliseconds elapsed\n", (end - start) * 1000.0 / (double)CLOCKS_PER_SEC);
 	objz_destroy(output);
 	return 0;
 }
