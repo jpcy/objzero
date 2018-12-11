@@ -512,6 +512,12 @@ objzOutput *objz_load(const char *_filename, objzVertexDecl *_vertexDecl) {
 		}
 		skipLine(&lexer);
 	}
+	if (objects.length == 0 && objectIndices.length > 0) {
+		// No objects specifed, but there's some geometry, so create one.
+		objzObject o;
+		o.name[0] = 0;
+		arrayAppend(&objects, &o);
+	}
 	if (objects.length > 0)
 		finalizeObject(OBJZ_ARRAY_ELEMENT(objects, objects.length - 1), &objectIndices, &objectFaceMaterials, &meshes, &indices, materials.length);
 	printf("%u positions\n", positions.length);
