@@ -169,17 +169,14 @@ static void objz_appendArray(Array *_array, void *_element) {
 		_array->data = malloc(_array->elementSize * _array->initialCapacity);
 		_array->capacity = _array->initialCapacity;
 	} else if (_array->length == _array->capacity) {
-		const void *oldData = _array->data;
-		const size_t oldCapacity = _array->capacity;
 		_array->capacity *= 2;
 		_array->data = realloc(_array->data, _array->capacity * _array->elementSize);
-		memcpy(_array->data, oldData, oldCapacity * _array->elementSize);
 	}
 	memcpy(&_array->data[_array->length * _array->elementSize], _element, _array->elementSize);
 	_array->length++;
 }
 
-#define OBJZ_ARRAY_ELEMENT(_array, _index) (void *)&_array.data[_array.elementSize * _index];
+#define OBJZ_ARRAY_ELEMENT(_array, _index) (void *)&(_array).data[(_array).elementSize * (_index)]
 
 static char *objz_readFile(const char *_filename) {
 	FILE *f;
@@ -366,21 +363,49 @@ uint32_t objz_hashOrGetVertex(VertexHashMap *_map, uint32_t _pos, uint32_t _texc
 	return i;
 }
 
+void objz_finalizeObject(objzObject *_object, Array *_objectIndices, Array *_objectFaceMaterials, Array *_meshes, Array *_indices, uint32_t _numMaterials) {
+	_object->firstMesh = _meshes->length;
+	_object->numMeshes = 0;
+	// Create one mesh per material. No material (-1) gets a mesh too.
+	for (int material = -1; material < (int)_numMaterials; material++) {
+		objzMesh mesh;
+		mesh.firstIndex = _indices->length;
+		mesh.numIndices = 0;
+		mesh.materialIndex = material;
+		for (uint32_t i = 0; i < _objectFaceMaterials->length; i++) {
+			const int *faceMaterial = OBJZ_ARRAY_ELEMENT(*_objectFaceMaterials, i);
+			if (*faceMaterial != material)
+				continue;
+			for (int k = 0; k < 3; k++)
+				objz_appendArray(_indices, OBJZ_ARRAY_ELEMENT(*_objectIndices, i * 3 + k));
+			mesh.numIndices += 3;
+		}
+		if (mesh.numIndices > 0) {
+			objz_appendArray(_meshes, &mesh);
+			_object->numMeshes++;
+		}
+	}
+}
+
 objzOutput *objz_load(const char *_filename) {
 	objzOutput *output = NULL;
 	char *buffer = objz_readFile(_filename);
 	if (!buffer)
 		goto cleanup;
-	Array materials, objects, indices, positions, texcoords, normals;
+	Array materials, meshes, objects, indices, positions, texcoords, normals;
+	Array objectIndices, objectFaceMaterials; // per object
 	objz_initArray(&materials, sizeof(objzMaterial), 8);
+	objz_initArray(&meshes, sizeof(objzMesh), 8);
 	objz_initArray(&objects, sizeof(objzObject), 8);
-	objz_initArray(&indices, sizeof(uint16_t), UINT16_MAX);
+	objz_initArray(&indices, sizeof(uint32_t), UINT16_MAX);
 	objz_initArray(&positions, sizeof(float) * 3, UINT16_MAX);
 	objz_initArray(&texcoords, sizeof(float) * 2, UINT16_MAX);
 	objz_initArray(&normals, sizeof(float) * 3, UINT16_MAX);
+	objz_initArray(&objectIndices, sizeof(uint32_t), UINT16_MAX);
+	objz_initArray(&objectFaceMaterials, sizeof(int), UINT16_MAX);
 	VertexHashMap vertexHashMap;
 	objz_initVertexHashMap(&vertexHashMap, &positions, &texcoords, &normals);
-	objzObject *currentObject = NULL;
+	int currentMaterialIndex = -1;
 	Lexer lexer;
 	objz_initLexer(&lexer, buffer);
 	Token token;
@@ -406,9 +431,12 @@ objzOutput *objz_load(const char *_filename) {
 					normal += normals.length;
 				face[i] = objz_hashOrGetVertex(&vertexHashMap, (uint32_t)pos, (uint32_t)texcoord, (uint32_t)normal);
 			}
-			printf("Face (%d verts):\n", numVerts);
-			for (int i = 0; i < numVerts; i++)
-				printf("%u\n", face[i]);
+			for (int i = 0; i < numVerts - 3 + 1; i++) {
+				objz_appendArray(&objectIndices, &face[0]);
+				objz_appendArray(&objectIndices, &face[i + 1]);
+				objz_appendArray(&objectIndices, &face[i + 2]);
+				objz_appendArray(&objectFaceMaterials, &currentMaterialIndex);
+			}
 		} else if (OBJZ_STRICMP(token.text, "mtllib") == 0) {
 			objz_tokenize(&lexer, &token, true);
 			if (token.text[0] == 0) {
@@ -423,18 +451,26 @@ objzOutput *objz_load(const char *_filename) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'o'", token.line, token.column);
 				goto cleanup;
 			}
+			if (objects.length > 0)
+				objz_finalizeObject(OBJZ_ARRAY_ELEMENT(objects, objects.length - 1), &objectIndices, &objectFaceMaterials, &meshes, &indices, materials.length);
 			objzObject o;
 			OBJZ_STRNCPY(o.name, sizeof(o.name), token.text);
 			objz_appendArray(&objects, &o);
-			currentObject = OBJZ_ARRAY_ELEMENT(objects, objects.length - 1);
-
+			objectIndices.length = 0;
+			objectFaceMaterials.length = 0;
 		} else if (OBJZ_STRICMP(token.text, "usemtl") == 0) {
 			objz_tokenize(&lexer, &token, false);
 			if (token.text[0] == 0) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'usemtl'", token.line, token.column);
 				goto cleanup;
 			}
-			printf("Use material: %s\n", token.text);
+			for (size_t i = 0; i < materials.length; i++) {
+				const objzMaterial *mat = OBJZ_ARRAY_ELEMENT(materials, i);
+				if (OBJZ_STRICMP(mat->name, token.text) == 0) {
+					currentMaterialIndex = (int)i;
+					break;
+				}
+			}
 		} else if (OBJZ_STRICMP(token.text, "v") == 0 || OBJZ_STRICMP(token.text, "vn") == 0 || OBJZ_STRICMP(token.text, "vt") == 0) {
 			int n = 3;
 			if (OBJZ_STRICMP(token.text, "vt") == 0)
@@ -451,14 +487,20 @@ objzOutput *objz_load(const char *_filename) {
 		}
 		objz_skipLine(&lexer);
 	}
+	if (objects.length > 0)
+		objz_finalizeObject(OBJZ_ARRAY_ELEMENT(objects, objects.length - 1), &objectIndices, &objectFaceMaterials, &meshes, &indices, materials.length);
 	printf("%u positions\n", positions.length);
 	printf("%u normals\n", normals.length);
 	printf("%u texcoords\n", texcoords.length);
 	printf("%u unique vertices\n", vertexHashMap.vertices.length);
 	output = malloc(sizeof(objzOutput));
 	memset(output, 0, sizeof(*output));
+	output->indices = (uint32_t *)indices.data;
+	output->numIndices = (uint32_t)indices.length;
 	output->materials = (objzMaterial *)materials.data;
 	output->numMaterials = (uint32_t)materials.length;
+	output->meshes = (objzMesh *)meshes.data;
+	output->numMeshes = (uint32_t)meshes.length;
 	output->objects = (objzObject *)objects.data;
 	output->numObjects = (uint32_t)objects.length;
 cleanup:

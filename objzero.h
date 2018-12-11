@@ -24,13 +24,26 @@ typedef struct {
 	char map_Kd[OBJZ_NAME_MAX];
 } objzMaterial;
 
+typedef struct
+{
+	int32_t materialIndex; // -1 if no material
+	uint32_t firstIndex;
+	uint32_t numIndices;
+} objzMesh;
+
 typedef struct {
 	char name[OBJZ_NAME_MAX];
+	uint32_t firstMesh;
+	uint32_t numMeshes;
 } objzObject;
 
 typedef struct {
+	uint32_t *indices;
+	uint32_t numIndices;
 	objzMaterial *materials;
 	uint32_t numMaterials;
+	objzMesh *meshes;
+	uint32_t numMeshes;
 	objzObject *objects;
 	uint32_t numObjects;
 } objzOutput;

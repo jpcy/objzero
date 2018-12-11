@@ -26,8 +26,15 @@ int main(int argc, char **argv) {
 	}
 	for (uint32_t i = 0; i < output->numMaterials; i++)
 		printMaterial(&output->materials[i]);
-	for (uint32_t i = 0; i < output->numObjects; i++)
-		printf("Object: %s\n", output->objects[i].name);
+	for (uint32_t i = 0; i < output->numObjects; i++) {
+		objzObject *object = &output->objects[i];
+		printf("Object: %s\n", object->name);
+		printf("   %d meshes\n", object->numMeshes);
+		for (uint32_t j = 0; j < object->numMeshes; j++) {
+			objzMesh *mesh = &output->meshes[object->firstMesh + j];
+			printf("      %d: '%s' material, %d indices\n", j, mesh->materialIndex < 0 ? "<empty>" : output->materials[mesh->materialIndex].name, mesh->numIndices);
+		}
+	}
 	objz_destroy(output);
 	return 0;
 }
