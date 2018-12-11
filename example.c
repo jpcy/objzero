@@ -26,6 +26,8 @@ int main(int argc, char **argv) {
 	}
 	for (uint32_t i = 0; i < output->numMaterials; i++)
 		printMaterial(&output->materials[i]);
+	for (uint32_t i = 0; i < output->numObjects; i++)
+		printf("Object: %s\n", output->objects[i].name);
 	objz_destroy(output);
 	return 0;
 }

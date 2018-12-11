@@ -307,8 +307,10 @@ objzOutput *objz_load(const char *_filename) {
 	char *buffer = objz_readFile(_filename);
 	if (!buffer)
 		goto cleanup;
-	Array materials;
+	Array materials, objects;
 	objz_initArray(&materials, 8);
+	objz_initArray(&objects, 8);
+	objzObject *currentObject = NULL;
 	Lexer lexer;
 	objz_initLexer(&lexer, buffer);
 	Token token;
@@ -338,7 +340,11 @@ objzOutput *objz_load(const char *_filename) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'o'", token.line, token.column);
 				goto cleanup;
 			}
-			printf("Object: %s\n", token.text);
+			objzObject o;
+			OBJZ_STRNCPY(o.name, sizeof(o.name), token.text);
+			objz_appendArray(&objects, &o, sizeof(objzObject));
+			currentObject = &((objzObject *)objects.data)[objects.length - 1];
+
 		} else if (OBJZ_STRICMP(token.text, "usemtl") == 0) {
 			objz_tokenize(&lexer, &token, false);
 			if (token.text[0] == 0) {
@@ -366,6 +372,8 @@ objzOutput *objz_load(const char *_filename) {
 	memset(output, 0, sizeof(*output));
 	output->materials = (objzMaterial *)materials.data;
 	output->numMaterials = (uint32_t)materials.length;
+	output->objects = (objzObject *)objects.data;
+	output->numObjects = (uint32_t)objects.length;
 cleanup:
 	free(buffer);
 	return output;
@@ -375,6 +383,7 @@ void objz_destroy(objzOutput *_output) {
 	if (!_output)
 		return;
 	free(_output->materials);
+	free(_output->objects);
 	free(_output);
 }
 

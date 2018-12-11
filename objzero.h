@@ -25,8 +25,14 @@ typedef struct {
 } objzMaterial;
 
 typedef struct {
+	char name[OBJZ_NAME_MAX];
+} objzObject;
+
+typedef struct {
 	objzMaterial *materials;
 	uint32_t numMaterials;
+	objzObject *objects;
+	uint32_t numObjects;
 } objzOutput;
 
 objzOutput *objz_load(const char *_filename);
