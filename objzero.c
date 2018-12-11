@@ -400,11 +400,18 @@ void finalizeObject(objzObject *_object, Array *_objectIndices, Array *_objectFa
 	}
 }
 
-objzOutput *objz_load(const char *_filename) {
+void objz_vertexDeclInit(objzVertexDecl *_vertexDecl) {
+	_vertexDecl->stride = sizeof(float) * 3 * 2 * 3;
+	_vertexDecl->positionOffset = 0;
+	_vertexDecl->texcoordOffset = sizeof(float) * 3;
+	_vertexDecl->normalOffset = sizeof(float) * 3 * 2;
+}
+
+objzOutput *objz_load(const char *_filename, objzVertexDecl *_vertexDecl) {
 	objzOutput *output = NULL;
 	char *buffer = readFile(_filename);
 	if (!buffer)
-		goto cleanup;
+		return NULL;
 	Array materials, meshes, objects, indices, positions, texcoords, normals;
 	Array objectIndices, objectFaceMaterials; // per object
 	arrayInit(&materials, sizeof(objzMaterial), 8);
@@ -419,6 +426,7 @@ objzOutput *objz_load(const char *_filename) {
 	VertexHashMap vertexHashMap;
 	vertexHashMapInit(&vertexHashMap, &positions, &texcoords, &normals);
 	int currentMaterialIndex = -1;
+	uint32_t flags = 0;
 	Lexer lexer;
 	initLexer(&lexer, buffer);
 	Token token;
@@ -430,7 +438,7 @@ objzOutput *objz_load(const char *_filename) {
 		} else if (OBJZ_STRICMP(token.text, "f") == 0) {
 			int faceAttribs[4*3], numVerts;
 			if (!parseFace(&lexer, faceAttribs, &numVerts))
-				goto cleanup;
+				goto error;
 			uint32_t face[4];
 			for (int i = 0; i < numVerts; i++) {
 				int pos = faceAttribs[i * 3 + 0];
@@ -454,15 +462,15 @@ objzOutput *objz_load(const char *_filename) {
 			tokenize(&lexer, &token, true);
 			if (token.text[0] == 0) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'mtllib'", token.line, token.column);
-				goto cleanup;
+				goto error;
 			}
 			if (!loadMaterialFile(_filename, token.text, &materials))
-				goto cleanup;
+				goto error;
 		} else if (OBJZ_STRICMP(token.text, "o") == 0) {
 			tokenize(&lexer, &token, false);
 			if (token.text[0] == 0) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'o'", token.line, token.column);
-				goto cleanup;
+				goto error;
 			}
 			if (objects.length > 0)
 				finalizeObject(OBJZ_ARRAY_ELEMENT(objects, objects.length - 1), &objectIndices, &objectFaceMaterials, &meshes, &indices, materials.length);
@@ -475,7 +483,7 @@ objzOutput *objz_load(const char *_filename) {
 			tokenize(&lexer, &token, false);
 			if (token.text[0] == 0) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'usemtl'", token.line, token.column);
-				goto cleanup;
+				goto error;
 			}
 			for (uint32_t i = 0; i < materials.length; i++) {
 				const objzMaterial *mat = OBJZ_ARRAY_ELEMENT(materials, i);
@@ -490,13 +498,17 @@ objzOutput *objz_load(const char *_filename) {
 				n = 2;
 			float vertex[3];
 			if (!parseFloats(&lexer, vertex, n))
-				goto cleanup;
+				goto error;
 			if (OBJZ_STRICMP(token.text, "v") == 0)
 				arrayAppend(&positions, vertex);
-			else if (OBJZ_STRICMP(token.text, "vn") == 0)
+			else if (OBJZ_STRICMP(token.text, "vn") == 0) {
 				arrayAppend(&normals, vertex);
-			else if (OBJZ_STRICMP(token.text, "vt") == 0)
+				flags |= OBJZ_FLAG_NORMALS;
+			}
+			else if (OBJZ_STRICMP(token.text, "vt") == 0) {
 				arrayAppend(&texcoords, vertex);
+				flags |= OBJZ_FLAG_TEXCOORDS;
+			}
 		}
 		skipLine(&lexer);
 	}
@@ -507,8 +519,8 @@ objzOutput *objz_load(const char *_filename) {
 	printf("%u texcoords\n", texcoords.length);
 	printf("%u unique vertices\n", vertexHashMap.vertices.length);
 	output = malloc(sizeof(objzOutput));
-	memset(output, 0, sizeof(*output));
-	output->indices = (uint32_t *)indices.data;
+	output->flags = flags;
+	output->indices = indices.data;
 	output->numIndices = indices.length;
 	output->materials = (objzMaterial *)materials.data;
 	output->numMaterials = materials.length;
@@ -516,16 +528,59 @@ objzOutput *objz_load(const char *_filename) {
 	output->numMeshes = meshes.length;
 	output->objects = (objzObject *)objects.data;
 	output->numObjects = objects.length;
-cleanup:
+	objzVertexDecl defaultVertexDecl;
+	objz_vertexDeclInit(&defaultVertexDecl);
+	if (memcmp(_vertexDecl, &defaultVertexDecl, sizeof(objzVertexDecl)) == 0) {
+		// Desired vertex decl matches the internal one, just use it directly.
+		output->vertices = vertexHashMap.vertices.data;
+	} else {
+		// Copy vertex data into the desired format.
+		output->vertices = malloc(_vertexDecl->stride * vertexHashMap.vertices.length);
+		for (uint32_t i = 0; i < vertexHashMap.vertices.length; i++) {
+			uint8_t *vOut = &((uint8_t *)output->vertices)[i * _vertexDecl->stride];
+			const Vertex *vIn = OBJZ_ARRAY_ELEMENT(vertexHashMap.vertices, i);
+			if (_vertexDecl->positionOffset != SIZE_MAX)
+				memcpy(&vOut[_vertexDecl->positionOffset], vIn->pos, sizeof(float) * 3);
+			if (_vertexDecl->texcoordOffset != SIZE_MAX)
+				memcpy(&vOut[_vertexDecl->texcoordOffset], vIn->texcoord, sizeof(float) * 2);
+			if (_vertexDecl->normalOffset != SIZE_MAX)
+				memcpy(&vOut[_vertexDecl->normalOffset], vIn->normal, sizeof(float) * 3);
+		}
+		free(vertexHashMap.vertices.data);
+	}
+	output->numVertices = vertexHashMap.vertices.length;
+	free(positions.data);
+	free(texcoords.data);
+	free(normals.data);
+	free(objectIndices.data);
+	free(objectFaceMaterials.data);
+	free(vertexHashMap.indices.data);
 	free(buffer);
 	return output;
+error:
+	free(materials.data);
+	free(meshes.data);
+	free(objects.data);
+	free(indices.data);
+	free(positions.data);
+	free(texcoords.data);
+	free(normals.data);
+	free(objectIndices.data);
+	free(objectFaceMaterials.data);
+	free(vertexHashMap.vertices.data);
+	free(vertexHashMap.indices.data);
+	free(buffer);
+	return NULL;
 }
 
 void objz_destroy(objzOutput *_output) {
 	if (!_output)
 		return;
+	free(_output->indices);
 	free(_output->materials);
+	free(_output->meshes);
 	free(_output->objects);
+	free(_output->vertices);
 	free(_output);
 }
 

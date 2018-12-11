@@ -19,7 +19,9 @@ static void printMaterial(const objzMaterial *_mat) {
 int main(int argc, char **argv) {
 	if (argc <= 1)
 		return 0;
-	objzOutput *output = objz_load(argv[1]);
+	objzVertexDecl vertexDecl;
+	objz_vertexDeclInit(&vertexDecl);
+	objzOutput *output = objz_load(argv[1], &vertexDecl);
 	if (!output) {
 		printf("ERROR: %s\n", objz_getError());
 		return 1;
