@@ -151,16 +151,16 @@ error:
 
 typedef struct {
 	uint8_t *data;
-	size_t length;
-	size_t capacity;
-	size_t elementSize;
-	size_t initialCapacity;
+	uint32_t length;
+	uint32_t capacity;
+	uint32_t elementSize;
+	uint32_t initialCapacity;
 } Array;
 
-static void objz_initArray(Array *_array, size_t _elementSize, size_t _initialCapacity) {
+static void objz_initArray(Array *_array, size_t _elementSize, uint32_t _initialCapacity) {
 	_array->data = NULL;
 	_array->length = _array->capacity = 0;
-	_array->elementSize = _elementSize;
+	_array->elementSize = (uint32_t)_elementSize;
 	_array->initialCapacity = _initialCapacity;
 }
 
@@ -464,7 +464,7 @@ objzOutput *objz_load(const char *_filename) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'usemtl'", token.line, token.column);
 				goto cleanup;
 			}
-			for (size_t i = 0; i < materials.length; i++) {
+			for (uint32_t i = 0; i < materials.length; i++) {
 				const objzMaterial *mat = OBJZ_ARRAY_ELEMENT(materials, i);
 				if (OBJZ_STRICMP(mat->name, token.text) == 0) {
 					currentMaterialIndex = (int)i;
@@ -496,13 +496,13 @@ objzOutput *objz_load(const char *_filename) {
 	output = malloc(sizeof(objzOutput));
 	memset(output, 0, sizeof(*output));
 	output->indices = (uint32_t *)indices.data;
-	output->numIndices = (uint32_t)indices.length;
+	output->numIndices = indices.length;
 	output->materials = (objzMaterial *)materials.data;
-	output->numMaterials = (uint32_t)materials.length;
+	output->numMaterials = materials.length;
 	output->meshes = (objzMesh *)meshes.data;
-	output->numMeshes = (uint32_t)meshes.length;
+	output->numMeshes = meshes.length;
 	output->objects = (objzObject *)objects.data;
-	output->numObjects = (uint32_t)objects.length;
+	output->numObjects = objects.length;
 cleanup:
 	free(buffer);
 	return output;
