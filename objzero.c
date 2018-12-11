@@ -35,28 +35,28 @@ typedef struct {
 	int line, column;
 } Token;
 
-static void objz_initLexer(Lexer *_lexer, char *_buf) {
+static void initLexer(Lexer *_lexer, char *_buf) {
 	_lexer->buf = _buf;
 	_lexer->line = _lexer->column = 1;
 }
 
-static bool objz_isEol(const Lexer *_lexer) {
+static bool isEol(const Lexer *_lexer) {
 	return (_lexer->buf[0] == '\n' || (_lexer->buf[0] == '\r' && _lexer->buf[1] != '\n'));
 }
 
-static bool objz_isEof(const Lexer *_lexer) {
+static bool isEof(const Lexer *_lexer) {
 	return (_lexer->buf[0] == 0);
 }
 
-static bool objz_isWhitespace(const Lexer *_lexer) {
+static bool isWhitespace(const Lexer *_lexer) {
 	return (_lexer->buf[0] == ' ' || _lexer->buf[0] == '\t' || _lexer->buf[0] == '\r');
 }
 
-static void objz_skipLine(Lexer *_lexer) {
+static void skipLine(Lexer *_lexer) {
 	for (;;) {
-		if (objz_isEof(_lexer))
+		if (isEof(_lexer))
 			break;
-		if (objz_isEol(_lexer)) {
+		if (isEol(_lexer)) {
 			_lexer->column = 1;
 			_lexer->line++;
 			_lexer->buf++;
@@ -67,24 +67,24 @@ static void objz_skipLine(Lexer *_lexer) {
 	}
 }
 
-static void objz_skipWhitespace(Lexer *_lexer) {
+static void skipWhitespace(Lexer *_lexer) {
 	for (;;) {
-		if (objz_isEof(_lexer))
+		if (isEof(_lexer))
 			break;
-		if (!objz_isWhitespace(_lexer))
+		if (!isWhitespace(_lexer))
 			break;
 		_lexer->buf++;
 		_lexer->column++;
 	}
 }
 
-static void objz_tokenize(Lexer *_lexer, Token *_token, bool includeWhitespace) {
+static void tokenize(Lexer *_lexer, Token *_token, bool includeWhitespace) {
 	int i = 0;
-	objz_skipWhitespace(_lexer);
+	skipWhitespace(_lexer);
 	_token->line = _lexer->line;
 	_token->column = _lexer->column;
 	for (;;) {
-		if (objz_isEof(_lexer) || objz_isEol(_lexer) || (!includeWhitespace && objz_isWhitespace(_lexer)))
+		if (isEof(_lexer) || isEol(_lexer) || (!includeWhitespace && isWhitespace(_lexer)))
 			break;
 		_token->text[i++] = _lexer->buf[0];
 		_lexer->buf++;
@@ -93,10 +93,10 @@ static void objz_tokenize(Lexer *_lexer, Token *_token, bool includeWhitespace) 
 	_token->text[i] = 0;
 }
 
-static bool objz_parseFloats(Lexer *_lexer, float *_result, int n) {
+static bool parseFloats(Lexer *_lexer, float *_result, int n) {
 	Token token;
 	for (int i = 0; i < n; i++) {
-		objz_tokenize(_lexer, &token, false);
+		tokenize(_lexer, &token, false);
 		if (strlen(token.text) == 0) {
 			snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Error parsing float", token.line, token.column);
 			return false;
@@ -106,9 +106,9 @@ static bool objz_parseFloats(Lexer *_lexer, float *_result, int n) {
 	return true;
 }
 
-static bool objz_parseInt(Lexer *_lexer, int *_result) {
+static bool parseInt(Lexer *_lexer, int *_result) {
 	Token token;
-	objz_tokenize(_lexer, &token, false);
+	tokenize(_lexer, &token, false);
 	if (strlen(token.text) == 0) {
 		snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Error parsing int", token.line, token.column);
 		return false;
@@ -117,13 +117,13 @@ static bool objz_parseInt(Lexer *_lexer, int *_result) {
 	return true;
 }
 
-static bool objz_parseFace(Lexer *_lexer, int *_face, int *_n) {
+static bool parseFace(Lexer *_lexer, int *_face, int *_n) {
 	Token token;
 	*_n = 0;
 	for (int i = 0; i < 4; i++) {
-		objz_tokenize(_lexer, &token, false);
+		tokenize(_lexer, &token, false);
 		if (token.text[0] == 0) {
-			if (i == 3 && objz_isEol(_lexer))
+			if (i == 3 && isEol(_lexer))
 				break;
 			goto error;
 		}
@@ -157,14 +157,14 @@ typedef struct {
 	uint32_t initialCapacity;
 } Array;
 
-static void objz_initArray(Array *_array, size_t _elementSize, uint32_t _initialCapacity) {
+static void arrayInit(Array *_array, size_t _elementSize, uint32_t _initialCapacity) {
 	_array->data = NULL;
 	_array->length = _array->capacity = 0;
 	_array->elementSize = (uint32_t)_elementSize;
 	_array->initialCapacity = _initialCapacity;
 }
 
-static void objz_appendArray(Array *_array, void *_element) {
+static void arrayAppend(Array *_array, void *_element) {
 	if (!_array->data) {
 		_array->data = malloc(_array->elementSize * _array->initialCapacity);
 		_array->capacity = _array->initialCapacity;
@@ -176,7 +176,7 @@ static void objz_appendArray(Array *_array, void *_element) {
 	_array->length++;
 }
 
-static void objz_arraySetCapacity(Array *_array, uint32_t _capacity) {
+static void arraySetCapacity(Array *_array, uint32_t _capacity) {
 	if (_capacity <= _array->capacity)
 		return;
 	if (!_array->data)
@@ -189,7 +189,7 @@ static void objz_arraySetCapacity(Array *_array, uint32_t _capacity) {
 
 #define OBJZ_ARRAY_ELEMENT(_array, _index) (void *)&(_array).data[(_array).elementSize * (_index)]
 
-static char *objz_readFile(const char *_filename) {
+static char *readFile(const char *_filename) {
 	FILE *f;
 	OBJZ_FOPEN(f, _filename, "rb");
 	if (!f) {
@@ -239,11 +239,11 @@ static MaterialTokenDef s_materialTokens[] = {
 	{ "map_Kd", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, map_Kd), 1 }
 };
 
-static void objz_initMaterial(objzMaterial *_mat) {
+static void materialInit(objzMaterial *_mat) {
 	memset(_mat, 0, sizeof(*_mat));
 }
 
-static int objz_loadMaterialFile(const char *_objFilename, const char *_materialName, Array *_materials) {
+static int loadMaterialFile(const char *_objFilename, const char *_materialName, Array *_materials) {
 	char filename[256] = { 0 };
 	const char *lastSlash = strrchr(_objFilename, '/');
 	if (!lastSlash)
@@ -258,28 +258,28 @@ static int objz_loadMaterialFile(const char *_objFilename, const char *_material
 	} else
 		OBJZ_STRNCPY(filename, sizeof(filename), _materialName);
 	int result = -1;
-	char *buffer = objz_readFile(filename);
+	char *buffer = readFile(filename);
 	if (!buffer)
 		goto cleanup;
 	Lexer lexer;
-	objz_initLexer(&lexer, buffer);
+	initLexer(&lexer, buffer);
 	Token token;
 	objzMaterial mat;
-	objz_initMaterial(&mat);
+	materialInit(&mat);
 	for (;;) {
-		objz_tokenize(&lexer, &token, false);
+		tokenize(&lexer, &token, false);
 		if (token.text[0] == 0) {
-			if (objz_isEof(&lexer))
+			if (isEof(&lexer))
 				break;
 		} else if (OBJZ_STRICMP(token.text, "newmtl") == 0) {
-			objz_tokenize(&lexer, &token, false);
+			tokenize(&lexer, &token, false);
 			if (token.text[0] == 0) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'newmtl'", token.line, token.column);
 				goto cleanup;
 			}
 			if (mat.name[0] != 0)
-				objz_appendArray(_materials, &mat);
-			objz_initMaterial(&mat);
+				arrayAppend(_materials, &mat);
+			materialInit(&mat);
 			OBJZ_STRNCPY(mat.name, sizeof(mat.name), token.text);
 		} else {
 			for (size_t i = 0; i < sizeof(s_materialTokens) / sizeof(s_materialTokens[0]); i++) {
@@ -287,27 +287,27 @@ static int objz_loadMaterialFile(const char *_objFilename, const char *_material
 				uint8_t *dest = &((uint8_t *)&mat)[mtd->offset];
 				if (OBJZ_STRICMP(token.text, mtd->name) == 0) {
 					if (mtd->type == OBJZ_MAT_TOKEN_STRING) {
-						objz_tokenize(&lexer, &token, false);
+						tokenize(&lexer, &token, false);
 						if (token.text[0] == 0) {
 							snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after '%s'", token.line, token.column, mtd->name);
 							goto cleanup;
 						}
 						OBJZ_STRNCPY((char *)dest, OBJZ_NAME_MAX, token.text);
 					} else if (mtd->type == OBJZ_MAT_TOKEN_FLOAT) {
-						if (!objz_parseFloats(&lexer, (float *)dest, mtd->n))
+						if (!parseFloats(&lexer, (float *)dest, mtd->n))
 							goto cleanup;
 					} else if (mtd->type == OBJZ_MAT_TOKEN_INT) {
-						if (!objz_parseInt(&lexer, (int *)dest))
+						if (!parseInt(&lexer, (int *)dest))
 							goto cleanup;
 					}
 					break;
 				}
 			}
 		}
-		objz_skipLine(&lexer);
+		skipLine(&lexer);
 	}
 	if (mat.name[0] != 0)
-		objz_appendArray(_materials, &mat);
+		arrayAppend(_materials, &mat);
 	result = 1;
 cleanup:
 	free(buffer);
@@ -338,17 +338,17 @@ typedef struct {
 	const Array *normals;
 } VertexHashMap;
 
-void objz_initVertexHashMap(VertexHashMap *_map, const Array *_positions, const Array *_texcoords, const Array *_normals) {
+void vertexHashMapInit(VertexHashMap *_map, const Array *_positions, const Array *_texcoords, const Array *_normals) {
 	for (int i = 0; i < OBJZ_VERTEX_HASH_MAP_SLOTS; i++)
 		_map->slots[i] = UINT32_MAX;
-	objz_initArray(&_map->indices, sizeof(Index), UINT16_MAX);
-	objz_initArray(&_map->vertices, sizeof(Vertex), UINT16_MAX);
+	arrayInit(&_map->indices, sizeof(Index), UINT16_MAX);
+	arrayInit(&_map->vertices, sizeof(Vertex), UINT16_MAX);
 	_map->positions = _positions;
 	_map->texcoords = _texcoords;
 	_map->normals = _normals;
 }
 
-uint32_t objz_hashOrGetVertex(VertexHashMap *_map, uint32_t _pos, uint32_t _texcoord, uint32_t _normal) {
+uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _pos, uint32_t _texcoord, uint32_t _normal) {
 	// http://www.beosil.com/download/CollisionDetectionHashing_VMV03.pdf
 	const uint32_t hash = ((_pos * 73856093) ^ (_texcoord * 19349663) ^ (_normal * 83492791)) % OBJZ_VERTEX_HASH_MAP_SLOTS;
 	uint32_t i = _map->slots[hash];
@@ -365,20 +365,20 @@ uint32_t objz_hashOrGetVertex(VertexHashMap *_map, uint32_t _pos, uint32_t _texc
 	index.texcoord = _texcoord;
 	index.normal = _normal;
 	index.hashNext = UINT32_MAX;
-	objz_appendArray(&_map->indices, &index);
+	arrayAppend(&_map->indices, &index);
 	Vertex vertex;
 	memcpy(vertex.pos, &_map->positions->data[i * 3], sizeof(float) * 3);
 	memcpy(vertex.texcoord, &_map->texcoords->data[i * 2], sizeof(float) * 2);
 	memcpy(vertex.normal, &_map->normals->data[i * 3], sizeof(float) * 3);
-	objz_appendArray(&_map->vertices, &vertex);
+	arrayAppend(&_map->vertices, &vertex);
 	return i;
 }
 
-void objz_finalizeObject(objzObject *_object, Array *_objectIndices, Array *_objectFaceMaterials, Array *_meshes, Array *_indices, uint32_t _numMaterials) {
+void finalizeObject(objzObject *_object, Array *_objectIndices, Array *_objectFaceMaterials, Array *_meshes, Array *_indices, uint32_t _numMaterials) {
 	_object->firstMesh = _meshes->length;
 	_object->numMeshes = 0;
 	// We know exactly how many indices are about to be appended. Avoid what would probably be a bunch of reallocations by setting the capacity directly.
-	objz_arraySetCapacity(_indices, _indices->capacity + _objectIndices->length);
+	arraySetCapacity(_indices, _indices->capacity + _objectIndices->length);
 	// Create one mesh per material. No material (-1) gets a mesh too.
 	for (int material = -1; material < (int)_numMaterials; material++) {
 		objzMesh mesh;
@@ -390,11 +390,11 @@ void objz_finalizeObject(objzObject *_object, Array *_objectIndices, Array *_obj
 			if (*faceMaterial != material)
 				continue;
 			for (int k = 0; k < 3; k++)
-				objz_appendArray(_indices, OBJZ_ARRAY_ELEMENT(*_objectIndices, i * 3 + k));
+				arrayAppend(_indices, OBJZ_ARRAY_ELEMENT(*_objectIndices, i * 3 + k));
 			mesh.numIndices += 3;
 		}
 		if (mesh.numIndices > 0) {
-			objz_appendArray(_meshes, &mesh);
+			arrayAppend(_meshes, &mesh);
 			_object->numMeshes++;
 		}
 	}
@@ -402,34 +402,34 @@ void objz_finalizeObject(objzObject *_object, Array *_objectIndices, Array *_obj
 
 objzOutput *objz_load(const char *_filename) {
 	objzOutput *output = NULL;
-	char *buffer = objz_readFile(_filename);
+	char *buffer = readFile(_filename);
 	if (!buffer)
 		goto cleanup;
 	Array materials, meshes, objects, indices, positions, texcoords, normals;
 	Array objectIndices, objectFaceMaterials; // per object
-	objz_initArray(&materials, sizeof(objzMaterial), 8);
-	objz_initArray(&meshes, sizeof(objzMesh), 8);
-	objz_initArray(&objects, sizeof(objzObject), 8);
-	objz_initArray(&indices, sizeof(uint32_t), UINT16_MAX);
-	objz_initArray(&positions, sizeof(float) * 3, UINT16_MAX);
-	objz_initArray(&texcoords, sizeof(float) * 2, UINT16_MAX);
-	objz_initArray(&normals, sizeof(float) * 3, UINT16_MAX);
-	objz_initArray(&objectIndices, sizeof(uint32_t), UINT16_MAX);
-	objz_initArray(&objectFaceMaterials, sizeof(int), UINT16_MAX);
+	arrayInit(&materials, sizeof(objzMaterial), 8);
+	arrayInit(&meshes, sizeof(objzMesh), 8);
+	arrayInit(&objects, sizeof(objzObject), 8);
+	arrayInit(&indices, sizeof(uint32_t), UINT16_MAX);
+	arrayInit(&positions, sizeof(float) * 3, UINT16_MAX);
+	arrayInit(&texcoords, sizeof(float) * 2, UINT16_MAX);
+	arrayInit(&normals, sizeof(float) * 3, UINT16_MAX);
+	arrayInit(&objectIndices, sizeof(uint32_t), UINT16_MAX);
+	arrayInit(&objectFaceMaterials, sizeof(int), UINT16_MAX);
 	VertexHashMap vertexHashMap;
-	objz_initVertexHashMap(&vertexHashMap, &positions, &texcoords, &normals);
+	vertexHashMapInit(&vertexHashMap, &positions, &texcoords, &normals);
 	int currentMaterialIndex = -1;
 	Lexer lexer;
-	objz_initLexer(&lexer, buffer);
+	initLexer(&lexer, buffer);
 	Token token;
 	for (;;) {
-		objz_tokenize(&lexer, &token, false);
+		tokenize(&lexer, &token, false);
 		if (token.text[0] == 0) {
-			if (objz_isEof(&lexer))
+			if (isEof(&lexer))
 				break;
 		} else if (OBJZ_STRICMP(token.text, "f") == 0) {
 			int faceAttribs[4*3], numVerts;
-			if (!objz_parseFace(&lexer, faceAttribs, &numVerts))
+			if (!parseFace(&lexer, faceAttribs, &numVerts))
 				goto cleanup;
 			uint32_t face[4];
 			for (int i = 0; i < numVerts; i++) {
@@ -442,37 +442,37 @@ objzOutput *objz_load(const char *_filename) {
 				int normal = faceAttribs[i * 3 + 2];
 				if (normal < 0)
 					normal += normals.length;
-				face[i] = objz_hashOrGetVertex(&vertexHashMap, (uint32_t)pos, (uint32_t)texcoord, (uint32_t)normal);
+				face[i] = vertexHashMapInsert(&vertexHashMap, (uint32_t)pos, (uint32_t)texcoord, (uint32_t)normal);
 			}
 			for (int i = 0; i < numVerts - 3 + 1; i++) {
-				objz_appendArray(&objectIndices, &face[0]);
-				objz_appendArray(&objectIndices, &face[i + 1]);
-				objz_appendArray(&objectIndices, &face[i + 2]);
-				objz_appendArray(&objectFaceMaterials, &currentMaterialIndex);
+				arrayAppend(&objectIndices, &face[0]);
+				arrayAppend(&objectIndices, &face[i + 1]);
+				arrayAppend(&objectIndices, &face[i + 2]);
+				arrayAppend(&objectFaceMaterials, &currentMaterialIndex);
 			}
 		} else if (OBJZ_STRICMP(token.text, "mtllib") == 0) {
-			objz_tokenize(&lexer, &token, true);
+			tokenize(&lexer, &token, true);
 			if (token.text[0] == 0) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'mtllib'", token.line, token.column);
 				goto cleanup;
 			}
-			if (!objz_loadMaterialFile(_filename, token.text, &materials))
+			if (!loadMaterialFile(_filename, token.text, &materials))
 				goto cleanup;
 		} else if (OBJZ_STRICMP(token.text, "o") == 0) {
-			objz_tokenize(&lexer, &token, false);
+			tokenize(&lexer, &token, false);
 			if (token.text[0] == 0) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'o'", token.line, token.column);
 				goto cleanup;
 			}
 			if (objects.length > 0)
-				objz_finalizeObject(OBJZ_ARRAY_ELEMENT(objects, objects.length - 1), &objectIndices, &objectFaceMaterials, &meshes, &indices, materials.length);
+				finalizeObject(OBJZ_ARRAY_ELEMENT(objects, objects.length - 1), &objectIndices, &objectFaceMaterials, &meshes, &indices, materials.length);
 			objzObject o;
 			OBJZ_STRNCPY(o.name, sizeof(o.name), token.text);
-			objz_appendArray(&objects, &o);
+			arrayAppend(&objects, &o);
 			objectIndices.length = 0;
 			objectFaceMaterials.length = 0;
 		} else if (OBJZ_STRICMP(token.text, "usemtl") == 0) {
-			objz_tokenize(&lexer, &token, false);
+			tokenize(&lexer, &token, false);
 			if (token.text[0] == 0) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'usemtl'", token.line, token.column);
 				goto cleanup;
@@ -489,19 +489,19 @@ objzOutput *objz_load(const char *_filename) {
 			if (OBJZ_STRICMP(token.text, "vt") == 0)
 				n = 2;
 			float vertex[3];
-			if (!objz_parseFloats(&lexer, vertex, n))
+			if (!parseFloats(&lexer, vertex, n))
 				goto cleanup;
 			if (OBJZ_STRICMP(token.text, "v") == 0)
-				objz_appendArray(&positions, vertex);
+				arrayAppend(&positions, vertex);
 			else if (OBJZ_STRICMP(token.text, "vn") == 0)
-				objz_appendArray(&normals, vertex);
+				arrayAppend(&normals, vertex);
 			else if (OBJZ_STRICMP(token.text, "vt") == 0)
-				objz_appendArray(&texcoords, vertex);
+				arrayAppend(&texcoords, vertex);
 		}
-		objz_skipLine(&lexer);
+		skipLine(&lexer);
 	}
 	if (objects.length > 0)
-		objz_finalizeObject(OBJZ_ARRAY_ELEMENT(objects, objects.length - 1), &objectIndices, &objectFaceMaterials, &meshes, &indices, materials.length);
+		finalizeObject(OBJZ_ARRAY_ELEMENT(objects, objects.length - 1), &objectIndices, &objectFaceMaterials, &meshes, &indices, materials.length);
 	printf("%u positions\n", positions.length);
 	printf("%u normals\n", normals.length);
 	printf("%u texcoords\n", texcoords.length);
