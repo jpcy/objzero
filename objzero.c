@@ -176,6 +176,17 @@ static void objz_appendArray(Array *_array, void *_element) {
 	_array->length++;
 }
 
+static void objz_arraySetCapacity(Array *_array, uint32_t _capacity) {
+	if (_capacity <= _array->capacity)
+		return;
+	if (!_array->data)
+		_array->initialCapacity = _capacity;
+	else {
+		_array->capacity = _capacity;
+		_array->data = realloc(_array->data, _array->capacity * _array->elementSize);
+	}
+}
+
 #define OBJZ_ARRAY_ELEMENT(_array, _index) (void *)&(_array).data[(_array).elementSize * (_index)]
 
 static char *objz_readFile(const char *_filename) {
@@ -366,6 +377,8 @@ uint32_t objz_hashOrGetVertex(VertexHashMap *_map, uint32_t _pos, uint32_t _texc
 void objz_finalizeObject(objzObject *_object, Array *_objectIndices, Array *_objectFaceMaterials, Array *_meshes, Array *_indices, uint32_t _numMaterials) {
 	_object->firstMesh = _meshes->length;
 	_object->numMeshes = 0;
+	// We know exactly how many indices are about to be appended. Avoid what would probably be a bunch of reallocations by setting the capacity directly.
+	objz_arraySetCapacity(_indices, _indices->capacity + _objectIndices->length);
 	// Create one mesh per material. No material (-1) gets a mesh too.
 	for (int material = -1; material < (int)_numMaterials; material++) {
 		objzMesh mesh;
