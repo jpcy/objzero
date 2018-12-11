@@ -367,9 +367,9 @@ uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _pos, uint32_t _texco
 	index.hashNext = UINT32_MAX;
 	arrayAppend(&_map->indices, &index);
 	Vertex vertex;
-	memcpy(vertex.pos, &_map->positions->data[i * 3], sizeof(float) * 3);
-	memcpy(vertex.texcoord, &_map->texcoords->data[i * 2], sizeof(float) * 2);
-	memcpy(vertex.normal, &_map->normals->data[i * 3], sizeof(float) * 3);
+	memcpy(vertex.pos, &_map->positions->data[_pos * 3], sizeof(float) * 3);
+	memcpy(vertex.texcoord, &_map->texcoords->data[_texcoord * 2], sizeof(float) * 2);
+	memcpy(vertex.normal, &_map->normals->data[_normal * 3], sizeof(float) * 3);
 	arrayAppend(&_map->vertices, &vertex);
 	return i;
 }
