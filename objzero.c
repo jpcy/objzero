@@ -153,29 +153,33 @@ typedef struct {
 	uint8_t *data;
 	size_t length;
 	size_t capacity;
-	size_t initialSize;
+	size_t elementSize;
+	size_t initialCapacity;
 } Array;
 
-static void objz_initArray(Array *_array, size_t _initialSize) {
+static void objz_initArray(Array *_array, size_t _elementSize, size_t _initialCapacity) {
 	_array->data = NULL;
 	_array->length = _array->capacity = 0;
-	_array->initialSize = _initialSize;
+	_array->elementSize = _elementSize;
+	_array->initialCapacity = _initialCapacity;
 }
 
-static void objz_appendArray(Array *_array, void *_object, size_t _objectSize) {
+static void objz_appendArray(Array *_array, void *_element) {
 	if (!_array->data) {
-		_array->data = malloc(_objectSize * _array->initialSize);
-		_array->capacity = _array->initialSize;
+		_array->data = malloc(_array->elementSize * _array->initialCapacity);
+		_array->capacity = _array->initialCapacity;
 	} else if (_array->length == _array->capacity) {
 		const void *oldData = _array->data;
 		const size_t oldCapacity = _array->capacity;
 		_array->capacity *= 2;
-		_array->data = realloc(_array->data, _array->capacity * _objectSize);
-		memcpy(_array->data, oldData, oldCapacity * _objectSize);
+		_array->data = realloc(_array->data, _array->capacity * _array->elementSize);
+		memcpy(_array->data, oldData, oldCapacity * _array->elementSize);
 	}
-	memcpy(&_array->data[_array->length * _objectSize], _object, _objectSize);
+	memcpy(&_array->data[_array->length * _array->elementSize], _element, _array->elementSize);
 	_array->length++;
 }
+
+#define OBJZ_ARRAY_ELEMENT(_array, _index) (void *)&_array.data[_array.elementSize * _index];
 
 static char *objz_readFile(const char *_filename) {
 	FILE *f;
@@ -266,7 +270,7 @@ static int objz_loadMaterialFile(const char *_objFilename, const char *_material
 				goto cleanup;
 			}
 			if (mat.name[0] != 0)
-				objz_appendArray(_materials, &mat, sizeof(mat));
+				objz_appendArray(_materials, &mat);
 			objz_initMaterial(&mat);
 			OBJZ_STRNCPY(mat.name, sizeof(mat.name), token.text);
 		} else {
@@ -295,7 +299,7 @@ static int objz_loadMaterialFile(const char *_objFilename, const char *_material
 		objz_skipLine(&lexer);
 	}
 	if (mat.name[0] != 0)
-		objz_appendArray(_materials, &mat, sizeof(mat));
+		objz_appendArray(_materials, &mat);
 	result = 1;
 cleanup:
 	free(buffer);
@@ -329,8 +333,8 @@ typedef struct {
 void objz_initVertexHashMap(VertexHashMap *_map, const Array *_positions, const Array *_texcoords, const Array *_normals) {
 	for (int i = 0; i < OBJZ_VERTEX_HASH_MAP_SLOTS; i++)
 		_map->slots[i] = UINT32_MAX;
-	objz_initArray(&_map->indices, UINT16_MAX);
-	objz_initArray(&_map->vertices, UINT16_MAX);
+	objz_initArray(&_map->indices, sizeof(Index), UINT16_MAX);
+	objz_initArray(&_map->vertices, sizeof(Vertex), UINT16_MAX);
 	_map->positions = _positions;
 	_map->texcoords = _texcoords;
 	_map->normals = _normals;
@@ -341,7 +345,7 @@ uint32_t objz_hashOrGetVertex(VertexHashMap *_map, uint32_t _pos, uint32_t _texc
 	const uint32_t hash = ((_pos * 73856093) ^ (_texcoord * 19349663) ^ (_normal * 83492791)) % OBJZ_VERTEX_HASH_MAP_SLOTS;
 	uint32_t i = _map->slots[hash];
 	while (i != UINT32_MAX) {
-		const Index *index = &((const Index *)_map->indices.data)[i];
+		const Index *index = OBJZ_ARRAY_ELEMENT(_map->indices, i);
 		if (index->pos == _pos && index->texcoord == _texcoord && index->normal == _normal)
 			return i;
 		i = index->hashNext;
@@ -353,12 +357,12 @@ uint32_t objz_hashOrGetVertex(VertexHashMap *_map, uint32_t _pos, uint32_t _texc
 	index.texcoord = _texcoord;
 	index.normal = _normal;
 	index.hashNext = UINT32_MAX;
-	objz_appendArray(&_map->indices, &index, sizeof(index));
+	objz_appendArray(&_map->indices, &index);
 	Vertex vertex;
 	memcpy(vertex.pos, &_map->positions->data[i * 3], sizeof(float) * 3);
 	memcpy(vertex.texcoord, &_map->texcoords->data[i * 2], sizeof(float) * 2);
 	memcpy(vertex.normal, &_map->normals->data[i * 3], sizeof(float) * 3);
-	objz_appendArray(&_map->vertices, &vertex, sizeof(vertex));
+	objz_appendArray(&_map->vertices, &vertex);
 	return i;
 }
 
@@ -368,12 +372,12 @@ objzOutput *objz_load(const char *_filename) {
 	if (!buffer)
 		goto cleanup;
 	Array materials, objects, indices, positions, texcoords, normals;
-	objz_initArray(&materials, 8);
-	objz_initArray(&objects, 8);
-	objz_initArray(&indices, UINT16_MAX);
-	objz_initArray(&positions, UINT16_MAX);
-	objz_initArray(&texcoords, UINT16_MAX);
-	objz_initArray(&normals, UINT16_MAX);
+	objz_initArray(&materials, sizeof(objzMaterial), 8);
+	objz_initArray(&objects, sizeof(objzObject), 8);
+	objz_initArray(&indices, sizeof(uint16_t), UINT16_MAX);
+	objz_initArray(&positions, sizeof(float) * 3, UINT16_MAX);
+	objz_initArray(&texcoords, sizeof(float) * 2, UINT16_MAX);
+	objz_initArray(&normals, sizeof(float) * 3, UINT16_MAX);
 	VertexHashMap vertexHashMap;
 	objz_initVertexHashMap(&vertexHashMap, &positions, &texcoords, &normals);
 	objzObject *currentObject = NULL;
@@ -421,8 +425,8 @@ objzOutput *objz_load(const char *_filename) {
 			}
 			objzObject o;
 			OBJZ_STRNCPY(o.name, sizeof(o.name), token.text);
-			objz_appendArray(&objects, &o, sizeof(objzObject));
-			currentObject = &((objzObject *)objects.data)[objects.length - 1];
+			objz_appendArray(&objects, &o);
+			currentObject = OBJZ_ARRAY_ELEMENT(objects, objects.length - 1);
 
 		} else if (OBJZ_STRICMP(token.text, "usemtl") == 0) {
 			objz_tokenize(&lexer, &token, false);
@@ -439,11 +443,11 @@ objzOutput *objz_load(const char *_filename) {
 			if (!objz_parseFloats(&lexer, vertex, n))
 				goto cleanup;
 			if (OBJZ_STRICMP(token.text, "v") == 0)
-				objz_appendArray(&positions, vertex, sizeof(float) * 3);
+				objz_appendArray(&positions, vertex);
 			else if (OBJZ_STRICMP(token.text, "vn") == 0)
-				objz_appendArray(&normals, vertex, sizeof(float) * 3);
+				objz_appendArray(&normals, vertex);
 			else if (OBJZ_STRICMP(token.text, "vt") == 0)
-				objz_appendArray(&texcoords, vertex, sizeof(float) * 2);
+				objz_appendArray(&texcoords, vertex);
 		}
 		objz_skipLine(&lexer);
 	}
