@@ -461,12 +461,19 @@ objzOutput *objz_load(const char *_filename) {
 				int pos = faceAttribs[i * 3 + 0];
 				if (pos < 0)
 					pos += positions.length;
+				pos--;
 				int texcoord = faceAttribs[i * 3 + 1];
-				if (texcoord < 0)
-					texcoord += texcoords.length;
+				if (texcoord != INT_MAX) {
+					if (texcoord < 0)
+						texcoord += texcoords.length;
+					texcoord--;
+				}
 				int normal = faceAttribs[i * 3 + 2];
-				if (normal < 0)
-					normal += normals.length;
+				if (normal != INT_MAX) {
+					if (normal < 0)
+						normal += normals.length;
+					normal--;
+				}
 				face[i] = vertexHashMapInsert(&vertexHashMap, (uint32_t)pos, (uint32_t)texcoord, (uint32_t)normal);
 				if (face[i] > UINT16_MAX)
 					flags |= OBJZ_FLAG_INDEX32;
