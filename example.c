@@ -20,10 +20,8 @@ static void printMaterial(const objzMaterial *_mat) {
 int main(int argc, char **argv) {
 	if (argc <= 1)
 		return 0;
-	objzVertexDecl vertexDecl;
-	objz_vertexDeclInit(&vertexDecl);
 	clock_t start = clock();
-	objzOutput *output = objz_load(argv[1], &vertexDecl);
+	objzOutput *output = objz_load(argv[1]);
 	clock_t end = clock();
 	if (!output) {
 		printf("ERROR: %s\n", objz_getError());

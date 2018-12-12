@@ -26,6 +26,22 @@
 static char s_error[OBJZ_MAX_ERROR_LENGTH] = { 0 };
 
 typedef struct {
+	size_t stride;
+	size_t positionOffset;
+	size_t texcoordOffset;
+	size_t normalOffset;
+	bool custom;
+} VertexFormat;
+
+static VertexFormat s_vertexDecl = {
+	.stride = sizeof(float) * 3 * 2 * 3,
+	.positionOffset = 0,
+	.texcoordOffset = sizeof(float) * 3,
+	.normalOffset = sizeof(float) * 3 * 2,
+	.custom = false
+};
+
+typedef struct {
 	char *buf;
 	int line, column;
 } Lexer;
@@ -398,14 +414,15 @@ void finalizeObject(objzObject *_object, Array *_objectIndices, Array *_objectFa
 	}
 }
 
-void objz_vertexDeclInit(objzVertexDecl *_vertexDecl) {
-	_vertexDecl->stride = sizeof(float) * 3 * 2 * 3;
-	_vertexDecl->positionOffset = 0;
-	_vertexDecl->texcoordOffset = sizeof(float) * 3;
-	_vertexDecl->normalOffset = sizeof(float) * 3 * 2;
+void objz_setVertexFormat(size_t _stride, size_t _positionOffset, size_t _texcoordOffset, size_t _normalOffset) {
+	s_vertexDecl.custom = true;
+	s_vertexDecl.stride = _stride;
+	s_vertexDecl.positionOffset = _positionOffset;
+	s_vertexDecl.texcoordOffset = _texcoordOffset;
+	s_vertexDecl.normalOffset = _normalOffset;
 }
 
-objzOutput *objz_load(const char *_filename, objzVertexDecl *_vertexDecl) {
+objzOutput *objz_load(const char *_filename) {
 	objzOutput *output = NULL;
 	char *buffer = readFile(_filename);
 	if (!buffer) {
@@ -535,23 +552,21 @@ objzOutput *objz_load(const char *_filename, objzVertexDecl *_vertexDecl) {
 	output->numMeshes = meshes.length;
 	output->objects = (objzObject *)objects.data;
 	output->numObjects = objects.length;
-	objzVertexDecl defaultVertexDecl;
-	objz_vertexDeclInit(&defaultVertexDecl);
-	if (memcmp(_vertexDecl, &defaultVertexDecl, sizeof(objzVertexDecl)) == 0) {
-		// Desired vertex decl matches the internal one, just use it directly.
+	if (!s_vertexDecl.custom) {
+		// Desired vertex format matches the internal one.
 		output->vertices = vertexHashMap.vertices.data;
 	} else {
 		// Copy vertex data into the desired format.
-		output->vertices = malloc(_vertexDecl->stride * vertexHashMap.vertices.length);
+		output->vertices = malloc(s_vertexDecl.stride * vertexHashMap.vertices.length);
 		for (uint32_t i = 0; i < vertexHashMap.vertices.length; i++) {
-			uint8_t *vOut = &((uint8_t *)output->vertices)[i * _vertexDecl->stride];
+			uint8_t *vOut = &((uint8_t *)output->vertices)[i * s_vertexDecl.stride];
 			const Vertex *vIn = OBJZ_ARRAY_ELEMENT(vertexHashMap.vertices, i);
-			if (_vertexDecl->positionOffset != SIZE_MAX)
-				memcpy(&vOut[_vertexDecl->positionOffset], vIn->pos, sizeof(float) * 3);
-			if (_vertexDecl->texcoordOffset != SIZE_MAX)
-				memcpy(&vOut[_vertexDecl->texcoordOffset], vIn->texcoord, sizeof(float) * 2);
-			if (_vertexDecl->normalOffset != SIZE_MAX)
-				memcpy(&vOut[_vertexDecl->normalOffset], vIn->normal, sizeof(float) * 3);
+			if (s_vertexDecl.positionOffset != SIZE_MAX)
+				memcpy(&vOut[s_vertexDecl.positionOffset], vIn->pos, sizeof(float) * 3);
+			if (s_vertexDecl.texcoordOffset != SIZE_MAX)
+				memcpy(&vOut[s_vertexDecl.texcoordOffset], vIn->texcoord, sizeof(float) * 2);
+			if (s_vertexDecl.normalOffset != SIZE_MAX)
+				memcpy(&vOut[s_vertexDecl.normalOffset], vIn->normal, sizeof(float) * 3);
 		}
 		free(vertexHashMap.vertices.data);
 	}

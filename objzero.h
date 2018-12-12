@@ -13,13 +13,6 @@ extern "C" {
 #define OBJZ_FLAG_INDEX32   1<<2
 
 typedef struct {
-	size_t stride;
-	size_t positionOffset;
-	size_t texcoordOffset; // optional: set to SIZE_MAX to ignore
-	size_t normalOffset; // optional: set to SIZE_MAX to ignore
-} objzVertexDecl;
-
-typedef struct {
 	char name[OBJZ_NAME_MAX];
 	float d;
 	int illum;
@@ -62,17 +55,20 @@ typedef struct {
 } objzOutput;
 
 /*
-Initialize objzVertexDecl to use a vertex data structure like this:
+Default vertex data structure looks like this:
 
 typedef struct {
 	float pos[3];
 	float texcoord[2];
 	float normal[3];
-}Vertex;
-*/
-void objz_vertexDeclInit(objzVertexDecl *_vertexDecl);
+} Vertex;
 
-objzOutput *objz_load(const char *_filename, objzVertexDecl *_vertexDecl);
+texcoordOffset - optional: set to SIZE_MAX to ignore
+normalOffset - optional: set to SIZE_MAX to ignore
+*/
+void objz_setVertexFormat(size_t _stride, size_t _positionOffset, size_t _texcoordOffset, size_t _normalOffset);
+
+objzOutput *objz_load(const char *_filename);
 void objz_destroy(objzOutput *_output);
 const char *objz_getError();
 
