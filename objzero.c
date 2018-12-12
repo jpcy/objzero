@@ -192,10 +192,8 @@ static void arraySetCapacity(Array *_array, uint32_t _capacity) {
 static char *readFile(const char *_filename) {
 	FILE *f;
 	OBJZ_FOPEN(f, _filename, "rb");
-	if (!f) {
-		snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "Failed to open file '%s'", _filename);
+	if (!f)
 		return NULL;
-	}
 	fseek(f, 0, SEEK_END);
 	const size_t fileLength = (size_t)ftell(f);
 	fseek(f, 0, SEEK_SET);
@@ -260,7 +258,7 @@ static int loadMaterialFile(const char *_objFilename, const char *_materialName,
 	int result = -1;
 	char *buffer = readFile(filename);
 	if (!buffer)
-		goto cleanup;
+		return result;
 	Lexer lexer;
 	initLexer(&lexer, buffer);
 	Token token;
@@ -410,8 +408,10 @@ void objz_vertexDeclInit(objzVertexDecl *_vertexDecl) {
 objzOutput *objz_load(const char *_filename, objzVertexDecl *_vertexDecl) {
 	objzOutput *output = NULL;
 	char *buffer = readFile(_filename);
-	if (!buffer)
+	if (!buffer) {
+		snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "Failed to read file '%s'", _filename);
 		return NULL;
+	}
 	Array materials, meshes, objects, indices, positions, texcoords, normals;
 	Array objectIndices, objectFaceMaterials; // per object
 	arrayInit(&materials, sizeof(objzMaterial), 8);
@@ -485,6 +485,7 @@ objzOutput *objz_load(const char *_filename, objzVertexDecl *_vertexDecl) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'usemtl'", token.line, token.column);
 				goto error;
 			}
+			currentMaterialIndex = -1;
 			for (uint32_t i = 0; i < materials.length; i++) {
 				const objzMaterial *mat = OBJZ_ARRAY_ELEMENT(materials, i);
 				if (OBJZ_STRICMP(mat->name, token.text) == 0) {
