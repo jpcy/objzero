@@ -468,6 +468,8 @@ objzOutput *objz_load(const char *_filename) {
 				if (normal < 0)
 					normal += normals.length;
 				face[i] = vertexHashMapInsert(&vertexHashMap, (uint32_t)pos, (uint32_t)texcoord, (uint32_t)normal);
+				if (face[i] > UINT16_MAX)
+					flags |= OBJZ_FLAG_INDEX32;
 			}
 			for (int i = 0; i < numVerts - 3 + 1; i++) {
 				arrayAppend(&objectIndices, &face[0]);
@@ -544,7 +546,16 @@ objzOutput *objz_load(const char *_filename) {
 	printf("%u unique vertices\n", vertexHashMap.vertices.length);
 	output = malloc(sizeof(objzOutput));
 	output->flags = flags;
-	output->indices = indices.data;
+	if (flags & OBJZ_FLAG_INDEX32)
+		output->indices = indices.data;
+	else {
+		output->indices = malloc(sizeof(uint16_t) * indices.length);
+		for (uint32_t i = 0; i < indices.length; i++) {
+			uint32_t *index = (uint32_t *)OBJZ_ARRAY_ELEMENT(indices, i);
+			((uint16_t *)output->indices)[i] = (uint16_t)*index;
+		}
+		free(indices.data);
+	}
 	output->numIndices = indices.length;
 	output->materials = (objzMaterial *)materials.data;
 	output->numMaterials = materials.length;

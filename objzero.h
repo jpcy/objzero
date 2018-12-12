@@ -50,7 +50,7 @@ typedef struct {
 	uint32_t numMeshes;
 	objzObject *objects;
 	uint32_t numObjects;
-	void *vertices;
+	void *vertices; // uint32_t if OBJZ_FLAG_INDEX32 flag is set, otherwise uint16_t
 	uint32_t numVertices;
 } objzOutput;
 
