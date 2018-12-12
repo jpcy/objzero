@@ -364,7 +364,12 @@ void vertexHashMapInit(VertexHashMap *_map, const Array *_positions, const Array
 
 uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _pos, uint32_t _texcoord, uint32_t _normal) {
 	// http://www.beosil.com/download/CollisionDetectionHashing_VMV03.pdf
-	const uint32_t hash = ((_pos * 73856093) ^ (_texcoord * 19349663) ^ (_normal * 83492791)) % OBJZ_VERTEX_HASH_MAP_SLOTS;
+	uint32_t hash = _pos * 73856093;
+	if (_texcoord != UINT32_MAX)
+		hash ^= _texcoord * 19349663;
+	if (_normal != UINT32_MAX)
+		hash ^= _normal * 83492791;
+	hash %= OBJZ_VERTEX_HASH_MAP_SLOTS;
 	uint32_t i = _map->slots[hash];
 	while (i != UINT32_MAX) {
 		const Index *index = OBJZ_ARRAY_ELEMENT(_map->indices, i);
@@ -458,23 +463,25 @@ objzOutput *objz_load(const char *_filename) {
 				goto error;
 			uint32_t face[4];
 			for (int i = 0; i < numVerts; i++) {
-				int pos = faceAttribs[i * 3 + 0];
-				if (pos < 0)
-					pos += positions.length;
-				pos--;
-				int texcoord = faceAttribs[i * 3 + 1];
-				if (texcoord != INT_MAX) {
-					if (texcoord < 0)
-						texcoord += texcoords.length;
-					texcoord--;
+				uint32_t attribLengths[3];
+				attribLengths[0] = positions.length;
+				attribLengths[1] = texcoords.length;
+				attribLengths[2] = normals.length;
+				uint32_t attribs[3];
+				for (int k = 0; k < 3; k++) {
+					int attrib = faceAttribs[i * 3 + k];
+					if (attrib == INT_MAX)
+						attribs[k] = UINT32_MAX;
+					else {
+						// Handle relative index.
+						if (attrib < 0)
+							attrib += (int)attribLengths[k];
+						// Convert from 1-indexed to 0-indexed.
+						attrib--;
+						attribs[k] = (uint32_t)attrib;
+					}
 				}
-				int normal = faceAttribs[i * 3 + 2];
-				if (normal != INT_MAX) {
-					if (normal < 0)
-						normal += normals.length;
-					normal--;
-				}
-				face[i] = vertexHashMapInsert(&vertexHashMap, (uint32_t)pos, (uint32_t)texcoord, (uint32_t)normal);
+				face[i] = vertexHashMapInsert(&vertexHashMap, attribs[0], attribs[1], attribs[2]);
 				if (face[i] > UINT16_MAX)
 					flags |= OBJZ_FLAG_INDEX32;
 			}
