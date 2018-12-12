@@ -42,6 +42,46 @@ static VertexFormat s_vertexDecl = {
 };
 
 typedef struct {
+	uint8_t *data;
+	uint32_t length;
+	uint32_t capacity;
+	uint32_t elementSize;
+	uint32_t initialCapacity;
+} Array;
+
+static void arrayInit(Array *_array, size_t _elementSize, uint32_t _initialCapacity) {
+	_array->data = NULL;
+	_array->length = _array->capacity = 0;
+	_array->elementSize = (uint32_t)_elementSize;
+	_array->initialCapacity = _initialCapacity;
+}
+
+static void arrayAppend(Array *_array, const void *_element) {
+	if (!_array->data) {
+		_array->data = malloc(_array->elementSize * _array->initialCapacity);
+		_array->capacity = _array->initialCapacity;
+	} else if (_array->length == _array->capacity) {
+		_array->capacity *= 2;
+		_array->data = realloc(_array->data, _array->capacity * _array->elementSize);
+	}
+	memcpy(&_array->data[_array->length * _array->elementSize], _element, _array->elementSize);
+	_array->length++;
+}
+
+static void arraySetCapacity(Array *_array, uint32_t _capacity) {
+	if (_capacity <= _array->capacity)
+		return;
+	if (!_array->data)
+		_array->initialCapacity = _capacity;
+	else {
+		_array->capacity = _capacity;
+		_array->data = realloc(_array->data, _array->capacity * _array->elementSize);
+	}
+}
+
+#define OBJZ_ARRAY_ELEMENT(_array, _index) (void *)&(_array).data[(_array).elementSize * (_index)]
+
+typedef struct {
 	char *buf;
 	int line, column;
 } Lexer;
@@ -133,77 +173,52 @@ static bool parseInt(Lexer *_lexer, int *_result) {
 	return true;
 }
 
-static bool parseFace(Lexer *_lexer, int *_face, int *_n) {
+typedef struct {
+	int v;
+	int vt;
+	int vn;
+} FaceIndexTriplet;
+
+static bool parseFace(Lexer *_lexer, Array *_faceIndexTriplets) {
 	Token token;
-	*_n = 0;
-	for (int i = 0; i < 4; i++) {
+	_faceIndexTriplets->length = 0;
+	for (;;) {
 		tokenize(_lexer, &token, false);
 		if (token.text[0] == 0) {
-			if (i == 3 && isEol(_lexer))
+			if (isEol(_lexer))
 				break;
 			goto error;
 		}
+		// Parse v/vt/vn
 		const char *delim = "/";
-		// v
-		char *context = NULL;
-		context = context; // Silence "unused variable" warning.
-		char *triplet = OBJZ_STRTOK(token.text, delim, &context);
-		if (!triplet)
+		char *start = token.text;
+		char *end = strstr(start, delim);
+		if (!end)
 			goto error;
-		_face[i * 3 + 0] = atoi(triplet);
-		// vt (optional)
-		triplet = OBJZ_STRTOK(NULL, delim, &context);
-		_face[i * 3 + 1] = triplet ? atoi(triplet) : INT_MAX;
-		// vn (optional)
-		triplet = OBJZ_STRTOK(NULL, delim, &context);
-		_face[i * 3 + 2] = triplet ? atoi(triplet) : INT_MAX;
-		(*_n)++;
+		*end = 0;
+		FaceIndexTriplet triplet;
+		triplet.v = atoi(start);
+		start = end + 1;
+		end = strstr(start, delim);
+		if (!end)
+			goto error;
+		*end = 0;
+		if (start == end)
+			triplet.vt = INT_MAX;
+		else
+			triplet.vt = atoi(start);
+		start = end + 1;
+		if (*start == 0)
+			triplet.vn = INT_MAX;
+		else
+			triplet.vn = atoi(start);
+		arrayAppend(_faceIndexTriplets, &triplet);
 	}
 	return true;
 error:
 	snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Failed to parse face", token.line, token.column);
 	return false;
 }
-
-typedef struct {
-	uint8_t *data;
-	uint32_t length;
-	uint32_t capacity;
-	uint32_t elementSize;
-	uint32_t initialCapacity;
-} Array;
-
-static void arrayInit(Array *_array, size_t _elementSize, uint32_t _initialCapacity) {
-	_array->data = NULL;
-	_array->length = _array->capacity = 0;
-	_array->elementSize = (uint32_t)_elementSize;
-	_array->initialCapacity = _initialCapacity;
-}
-
-static void arrayAppend(Array *_array, void *_element) {
-	if (!_array->data) {
-		_array->data = malloc(_array->elementSize * _array->initialCapacity);
-		_array->capacity = _array->initialCapacity;
-	} else if (_array->length == _array->capacity) {
-		_array->capacity *= 2;
-		_array->data = realloc(_array->data, _array->capacity * _array->elementSize);
-	}
-	memcpy(&_array->data[_array->length * _array->elementSize], _element, _array->elementSize);
-	_array->length++;
-}
-
-static void arraySetCapacity(Array *_array, uint32_t _capacity) {
-	if (_capacity <= _array->capacity)
-		return;
-	if (!_array->data)
-		_array->initialCapacity = _capacity;
-	else {
-		_array->capacity = _capacity;
-		_array->data = realloc(_array->data, _array->capacity * _array->elementSize);
-	}
-}
-
-#define OBJZ_ARRAY_ELEMENT(_array, _index) (void *)&(_array).data[(_array).elementSize * (_index)]
 
 static char *readFile(const char *_filename) {
 	FILE *f;
@@ -352,7 +367,7 @@ typedef struct {
 	const Array *normals;
 } VertexHashMap;
 
-void vertexHashMapInit(VertexHashMap *_map, const Array *_positions, const Array *_texcoords, const Array *_normals) {
+static void vertexHashMapInit(VertexHashMap *_map, const Array *_positions, const Array *_texcoords, const Array *_normals) {
 	for (int i = 0; i < OBJZ_VERTEX_HASH_MAP_SLOTS; i++)
 		_map->slots[i] = UINT32_MAX;
 	arrayInit(&_map->indices, sizeof(Index), UINT16_MAX);
@@ -362,7 +377,7 @@ void vertexHashMapInit(VertexHashMap *_map, const Array *_positions, const Array
 	_map->normals = _normals;
 }
 
-uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _pos, uint32_t _texcoord, uint32_t _normal) {
+static uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _pos, uint32_t _texcoord, uint32_t _normal) {
 	// http://www.beosil.com/download/CollisionDetectionHashing_VMV03.pdf
 	uint32_t hash = _pos * 73856093;
 	if (_texcoord != UINT32_MAX)
@@ -387,13 +402,19 @@ uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _pos, uint32_t _texco
 	arrayAppend(&_map->indices, &index);
 	Vertex vertex;
 	memcpy(vertex.pos, &_map->positions->data[_pos * 3], sizeof(float) * 3);
-	memcpy(vertex.texcoord, &_map->texcoords->data[_texcoord * 2], sizeof(float) * 2);
-	memcpy(vertex.normal, &_map->normals->data[_normal * 3], sizeof(float) * 3);
+	if (_texcoord == UINT32_MAX)
+		vertex.texcoord[0] = vertex.texcoord[1] = 0;
+	else
+		memcpy(vertex.texcoord, &_map->texcoords->data[_texcoord * 2], sizeof(float) * 2);
+	if (_normal == UINT32_MAX)
+		vertex.normal[0] = vertex.normal[1] = vertex.normal[2] = 0;
+	else
+		memcpy(vertex.normal, &_map->normals->data[_normal * 3], sizeof(float) * 3);
 	arrayAppend(&_map->vertices, &vertex);
 	return i;
 }
 
-void finalizeObject(objzObject *_object, Array *_objectIndices, Array *_objectFaceMaterials, Array *_meshes, Array *_indices, uint32_t _numMaterials) {
+static void finalizeObject(objzObject *_object, Array *_objectIndices, Array *_objectFaceMaterials, Array *_meshes, Array *_indices, uint32_t _numMaterials) {
 	_object->firstMesh = _meshes->length;
 	_object->numMeshes = 0;
 	// We know exactly how many indices are about to be appended. Avoid what would probably be a bunch of reallocations by setting the capacity directly.
@@ -419,6 +440,16 @@ void finalizeObject(objzObject *_object, Array *_objectIndices, Array *_objectFa
 	}
 }
 
+static uint32_t sanitizeVertexAttribIndex(int _index, uint32_t _n) {
+	if (_index == INT_MAX)
+		return UINT32_MAX;
+	// Handle relative index.
+	if (_index < 0)
+		return (uint32_t)(_index + _n);
+	// Convert from 1-indexed to 0-indexed.
+	return (uint32_t)(_index - 1);
+}
+
 void objz_setVertexFormat(size_t _stride, size_t _positionOffset, size_t _texcoordOffset, size_t _normalOffset) {
 	s_vertexDecl.custom = true;
 	s_vertexDecl.stride = _stride;
@@ -436,6 +467,7 @@ objzOutput *objz_load(const char *_filename) {
 	}
 	Array materials, meshes, objects, indices, positions, texcoords, normals;
 	Array objectIndices, objectFaceMaterials; // per object
+	Array faceIndexTriplets, faceIndices; // per face
 	arrayInit(&materials, sizeof(objzMaterial), 8);
 	arrayInit(&meshes, sizeof(objzMesh), 8);
 	arrayInit(&objects, sizeof(objzObject), 8);
@@ -445,6 +477,8 @@ objzOutput *objz_load(const char *_filename) {
 	arrayInit(&normals, sizeof(float) * 3, UINT16_MAX);
 	arrayInit(&objectIndices, sizeof(uint32_t), UINT16_MAX);
 	arrayInit(&objectFaceMaterials, sizeof(int), UINT16_MAX);
+	arrayInit(&faceIndexTriplets, sizeof(FaceIndexTriplet), 8);
+	arrayInit(&faceIndices, sizeof(uint32_t), 8);
 	VertexHashMap vertexHashMap;
 	vertexHashMapInit(&vertexHashMap, &positions, &texcoords, &normals);
 	int currentMaterialIndex = -1;
@@ -458,37 +492,27 @@ objzOutput *objz_load(const char *_filename) {
 			if (isEof(&lexer))
 				break;
 		} else if (OBJZ_STRICMP(token.text, "f") == 0) {
-			int faceAttribs[4*3], numVerts;
-			if (!parseFace(&lexer, faceAttribs, &numVerts))
+			if (!parseFace(&lexer, &faceIndexTriplets))
 				goto error;
-			uint32_t face[4];
-			for (int i = 0; i < numVerts; i++) {
-				uint32_t attribLengths[3];
-				attribLengths[0] = positions.length;
-				attribLengths[1] = texcoords.length;
-				attribLengths[2] = normals.length;
-				uint32_t attribs[3];
-				for (int k = 0; k < 3; k++) {
-					int attrib = faceAttribs[i * 3 + k];
-					if (attrib == INT_MAX)
-						attribs[k] = UINT32_MAX;
-					else {
-						// Handle relative index.
-						if (attrib < 0)
-							attrib += (int)attribLengths[k];
-						// Convert from 1-indexed to 0-indexed.
-						attrib--;
-						attribs[k] = (uint32_t)attrib;
-					}
-				}
-				face[i] = vertexHashMapInsert(&vertexHashMap, attribs[0], attribs[1], attribs[2]);
-				if (face[i] > UINT16_MAX)
+			faceIndices.length = 0;
+			for (uint32_t i = 0; i < faceIndexTriplets.length; i++) {
+				const FaceIndexTriplet *triplet = OBJZ_ARRAY_ELEMENT(faceIndexTriplets, i);
+				const uint32_t v = sanitizeVertexAttribIndex(triplet->v, positions.length);
+				const uint32_t vt = sanitizeVertexAttribIndex(triplet->vt, texcoords.length);
+				const uint32_t vn = sanitizeVertexAttribIndex(triplet->vn, normals.length);
+				const uint32_t index = vertexHashMapInsert(&vertexHashMap, v, vt, vn);
+				if (index > UINT16_MAX)
 					flags |= OBJZ_FLAG_INDEX32;
+				arrayAppend(&faceIndices, &index);
 			}
-			for (int i = 0; i < numVerts - 3 + 1; i++) {
-				arrayAppend(&objectIndices, &face[0]);
-				arrayAppend(&objectIndices, &face[i + 1]);
-				arrayAppend(&objectIndices, &face[i + 2]);
+			if (faceIndices.length < 3) {
+				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Face needs at least 3 indices", token.line, token.column);
+				goto error;
+			}
+			for (int i = 0; i < (int)faceIndices.length - 3 + 1; i++) {
+				arrayAppend(&objectIndices, OBJZ_ARRAY_ELEMENT(faceIndices, 0));
+				arrayAppend(&objectIndices, OBJZ_ARRAY_ELEMENT(faceIndices, i + 1));
+				arrayAppend(&objectIndices, OBJZ_ARRAY_ELEMENT(faceIndices, i + 2));
 				arrayAppend(&objectFaceMaterials, &currentMaterialIndex);
 			}
 		} else if (OBJZ_STRICMP(token.text, "mtllib") == 0) {
@@ -601,6 +625,8 @@ objzOutput *objz_load(const char *_filename) {
 	free(normals.data);
 	free(objectIndices.data);
 	free(objectFaceMaterials.data);
+	free(faceIndexTriplets.data);
+	free(faceIndices.data);
 	free(vertexHashMap.indices.data);
 	free(buffer);
 	return output;
@@ -614,6 +640,8 @@ error:
 	free(normals.data);
 	free(objectIndices.data);
 	free(objectFaceMaterials.data);
+	free(faceIndexTriplets.data);
+	free(faceIndices.data);
 	free(vertexHashMap.vertices.data);
 	free(vertexHashMap.indices.data);
 	free(buffer);
