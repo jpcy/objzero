@@ -24,6 +24,7 @@
 #define OBJZ_MAX_TOKEN_LENGTH 256
 
 static char s_error[OBJZ_MAX_ERROR_LENGTH] = { 0 };
+static uint32_t s_indexFormat = OBJZ_INDEX_FORMAT_AUTO;
 
 typedef struct {
 	size_t stride;
@@ -453,6 +454,10 @@ static uint32_t sanitizeVertexAttribIndex(int _index, uint32_t _n) {
 	return (uint32_t)(_index - 1);
 }
 
+void objz_setIndexFormat(int _format) {
+	s_indexFormat = _format;
+}
+
 void objz_setVertexFormat(size_t _stride, size_t _positionOffset, size_t _texcoordOffset, size_t _normalOffset) {
 	s_vertexDecl.custom = true;
 	s_vertexDecl.stride = _stride;
@@ -587,9 +592,10 @@ objzOutput *objz_load(const char *_filename) {
 	printf("%u unique vertices\n", vertexHashMap.vertices.length);
 	output = malloc(sizeof(objzOutput));
 	output->flags = flags;
-	if (flags & OBJZ_FLAG_INDEX32)
+	if (s_indexFormat == OBJZ_INDEX_FORMAT_U32 || (flags & OBJZ_FLAG_INDEX32))
 		output->indices = indices.data;
 	else {
+		flags &= ~OBJZ_FLAG_INDEX32;
 		output->indices = malloc(sizeof(uint16_t) * indices.length);
 		for (uint32_t i = 0; i < indices.length; i++) {
 			uint32_t *index = (uint32_t *)OBJZ_ARRAY_ELEMENT(indices, i);

@@ -8,6 +8,8 @@ extern "C" {
 #endif
 
 #define OBJZ_NAME_MAX 64
+#define OBJZ_INDEX_FORMAT_AUTO 0
+#define OBJZ_INDEX_FORMAT_U32  2
 #define OBJZ_FLAG_TEXCOORDS 1<<0
 #define OBJZ_FLAG_NORMALS   1<<1
 #define OBJZ_FLAG_INDEX32   1<<2
@@ -42,6 +44,8 @@ typedef struct {
 
 typedef struct {
 	uint32_t flags;
+	// Will be uint32_t if OBJZ_FLAG_INDEX32 flag is set, otherwise uint16_t.
+	// See: objz_setIndexFormat
 	void *indices;
 	uint32_t numIndices;
 	objzMaterial *materials;
@@ -50,9 +54,12 @@ typedef struct {
 	uint32_t numMeshes;
 	objzObject *objects;
 	uint32_t numObjects;
-	void *vertices; // uint32_t if OBJZ_FLAG_INDEX32 flag is set, otherwise uint16_t
+	void *vertices;
 	uint32_t numVertices;
 } objzOutput;
+
+// Default is OBJZ_INDEX_FORMAT_AUTO.
+void objz_setIndexFormat(int _format);
 
 /*
 Default vertex data structure looks like this:
