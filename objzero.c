@@ -400,16 +400,19 @@ static uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _pos, uint32_t
 	index.normal = _normal;
 	index.hashNext = UINT32_MAX;
 	arrayAppend(&_map->indices, &index);
+	const size_t posSize = sizeof(float) * 3;
+	const size_t texcoordSize = sizeof(float) * 2;
+	const size_t normalSize = sizeof(float) * 3;
 	Vertex vertex;
-	memcpy(vertex.pos, &_map->positions->data[_pos * 3], sizeof(float) * 3);
+	memcpy(vertex.pos, &_map->positions->data[_pos * posSize], posSize);
 	if (_texcoord == UINT32_MAX)
 		vertex.texcoord[0] = vertex.texcoord[1] = 0;
 	else
-		memcpy(vertex.texcoord, &_map->texcoords->data[_texcoord * 2], sizeof(float) * 2);
+		memcpy(vertex.texcoord, &_map->texcoords->data[_texcoord * texcoordSize], texcoordSize);
 	if (_normal == UINT32_MAX)
 		vertex.normal[0] = vertex.normal[1] = vertex.normal[2] = 0;
 	else
-		memcpy(vertex.normal, &_map->normals->data[_normal * 3], sizeof(float) * 3);
+		memcpy(vertex.normal, &_map->normals->data[_normal * normalSize], normalSize);
 	arrayAppend(&_map->vertices, &vertex);
 	return i;
 }
