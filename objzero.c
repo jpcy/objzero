@@ -610,6 +610,7 @@ objzOutput *objz_load(const char *_filename) {
 	} else {
 		// Copy vertex data into the desired format.
 		output->vertices = malloc(s_vertexDecl.stride * vertexHashMap.vertices.length);
+		memset(output->vertices, 0, s_vertexDecl.stride * vertexHashMap.vertices.length);
 		for (uint32_t i = 0; i < vertexHashMap.vertices.length; i++) {
 			uint8_t *vOut = &((uint8_t *)output->vertices)[i * s_vertexDecl.stride];
 			const Vertex *vIn = OBJZ_ARRAY_ELEMENT(vertexHashMap.vertices, i);
