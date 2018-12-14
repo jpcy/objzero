@@ -378,14 +378,22 @@ static void vertexHashMapInit(VertexHashMap *_map, const Array *_positions, cons
 	_map->normals = _normals;
 }
 
+static uint32_t sdbmHash(const uint8_t *_data, uint32_t _size)
+{
+	uint32_t hash = 0;
+	for (uint32_t i = 0; i < _size; i++)
+		hash = (uint32_t)_data[i] + (hash << 6) + (hash << 16) - hash;
+	return hash;
+}
+
 static uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _pos, uint32_t _texcoord, uint32_t _normal) {
-	// http://www.beosil.com/download/CollisionDetectionHashing_VMV03.pdf
-	uint32_t hash = _pos * 73856093;
+	uint32_t hashData[3] = { 0 };
+	hashData[0] = _pos;
 	if (_texcoord != UINT32_MAX)
-		hash ^= _texcoord * 19349663;
+		hashData[1] = _texcoord;
 	if (_normal != UINT32_MAX)
-		hash ^= _normal * 83492791;
-	hash %= OBJZ_VERTEX_HASH_MAP_SLOTS;
+		hashData[2] = _normal;
+	const uint32_t hash = sdbmHash((const uint8_t *)hashData, sizeof(hashData)) % OBJZ_VERTEX_HASH_MAP_SLOTS;
 	uint32_t i = _map->slots[hash];
 	while (i != UINT32_MAX) {
 		const Index *index = OBJZ_ARRAY_ELEMENT(_map->indices, i);
