@@ -393,13 +393,12 @@ static uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _pos, uint32_t
 			return i;
 		i = index->hashNext;
 	}
-	i = _map->indices.length;
-	_map->slots[hash] = i;
 	Index index;
 	index.pos = _pos;
 	index.texcoord = _texcoord;
 	index.normal = _normal;
-	index.hashNext = UINT32_MAX;
+	index.hashNext = _map->slots[hash];
+	_map->slots[hash] = _map->indices.length;
 	arrayAppend(&_map->indices, &index);
 	const size_t posSize = sizeof(float) * 3;
 	const size_t texcoordSize = sizeof(float) * 2;
