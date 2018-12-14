@@ -56,7 +56,7 @@ typedef struct {
 	uint32_t numObjects;
 	void *vertices;
 	uint32_t numVertices;
-} objzOutput;
+} objzModel;
 
 // Default is OBJZ_INDEX_FORMAT_AUTO.
 void objz_setIndexFormat(int _format);
@@ -75,8 +75,8 @@ normalOffset - optional: set to SIZE_MAX to ignore
 */
 void objz_setVertexFormat(size_t _stride, size_t _positionOffset, size_t _texcoordOffset, size_t _normalOffset);
 
-objzOutput *objz_load(const char *_filename);
-void objz_destroy(objzOutput *_output);
+objzModel *objz_load(const char *_filename);
+void objz_destroy(objzModel *_model);
 const char *objz_getError();
 
 #ifdef __cplusplus

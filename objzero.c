@@ -465,8 +465,8 @@ void objz_setVertexFormat(size_t _stride, size_t _positionOffset, size_t _texcoo
 	s_vertexDecl.normalOffset = _normalOffset;
 }
 
-objzOutput *objz_load(const char *_filename) {
-	objzOutput *output = NULL;
+objzModel *objz_load(const char *_filename) {
+	objzModel *model = NULL;
 	char *buffer = readFile(_filename);
 	if (!buffer) {
 		snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "Failed to read file '%s'", _filename);
@@ -585,39 +585,35 @@ objzOutput *objz_load(const char *_filename) {
 	}
 	if (objects.length > 0)
 		finalizeObject(OBJZ_ARRAY_ELEMENT(objects, objects.length - 1), &objectIndices, &objectFaceMaterials, &meshes, &indices, materials.length);
-	printf("%u positions\n", positions.length);
-	printf("%u normals\n", normals.length);
-	printf("%u texcoords\n", texcoords.length);
-	printf("%u unique vertices\n", vertexHashMap.vertices.length);
-	output = malloc(sizeof(objzOutput));
-	output->flags = flags;
+	model = malloc(sizeof(objzModel));
+	model->flags = flags;
 	if (s_indexFormat == OBJZ_INDEX_FORMAT_U32 || (flags & OBJZ_FLAG_INDEX32))
-		output->indices = indices.data;
+		model->indices = indices.data;
 	else {
 		flags &= ~OBJZ_FLAG_INDEX32;
-		output->indices = malloc(sizeof(uint16_t) * indices.length);
+		model->indices = malloc(sizeof(uint16_t) * indices.length);
 		for (uint32_t i = 0; i < indices.length; i++) {
 			uint32_t *index = (uint32_t *)OBJZ_ARRAY_ELEMENT(indices, i);
-			((uint16_t *)output->indices)[i] = (uint16_t)*index;
+			((uint16_t *)model->indices)[i] = (uint16_t)*index;
 		}
 		free(indices.data);
 	}
-	output->numIndices = indices.length;
-	output->materials = (objzMaterial *)materials.data;
-	output->numMaterials = materials.length;
-	output->meshes = (objzMesh *)meshes.data;
-	output->numMeshes = meshes.length;
-	output->objects = (objzObject *)objects.data;
-	output->numObjects = objects.length;
+	model->numIndices = indices.length;
+	model->materials = (objzMaterial *)materials.data;
+	model->numMaterials = materials.length;
+	model->meshes = (objzMesh *)meshes.data;
+	model->numMeshes = meshes.length;
+	model->objects = (objzObject *)objects.data;
+	model->numObjects = objects.length;
 	if (!s_vertexDecl.custom) {
 		// Desired vertex format matches the internal one.
-		output->vertices = vertexHashMap.vertices.data;
+		model->vertices = vertexHashMap.vertices.data;
 	} else {
 		// Copy vertex data into the desired format.
-		output->vertices = malloc(s_vertexDecl.stride * vertexHashMap.vertices.length);
-		memset(output->vertices, 0, s_vertexDecl.stride * vertexHashMap.vertices.length);
+		model->vertices = malloc(s_vertexDecl.stride * vertexHashMap.vertices.length);
+		memset(model->vertices, 0, s_vertexDecl.stride * vertexHashMap.vertices.length);
 		for (uint32_t i = 0; i < vertexHashMap.vertices.length; i++) {
-			uint8_t *vOut = &((uint8_t *)output->vertices)[i * s_vertexDecl.stride];
+			uint8_t *vOut = &((uint8_t *)model->vertices)[i * s_vertexDecl.stride];
 			const Vertex *vIn = OBJZ_ARRAY_ELEMENT(vertexHashMap.vertices, i);
 			if (s_vertexDecl.positionOffset != SIZE_MAX)
 				memcpy(&vOut[s_vertexDecl.positionOffset], vIn->pos, sizeof(float) * 3);
@@ -628,7 +624,7 @@ objzOutput *objz_load(const char *_filename) {
 		}
 		free(vertexHashMap.vertices.data);
 	}
-	output->numVertices = vertexHashMap.vertices.length;
+	model->numVertices = vertexHashMap.vertices.length;
 	free(positions.data);
 	free(texcoords.data);
 	free(normals.data);
@@ -638,7 +634,7 @@ objzOutput *objz_load(const char *_filename) {
 	free(faceIndices.data);
 	free(vertexHashMap.indices.data);
 	free(buffer);
-	return output;
+	return model;
 error:
 	free(materials.data);
 	free(meshes.data);
@@ -657,15 +653,15 @@ error:
 	return NULL;
 }
 
-void objz_destroy(objzOutput *_output) {
-	if (!_output)
+void objz_destroy(objzModel *_model) {
+	if (!_model)
 		return;
-	free(_output->indices);
-	free(_output->materials);
-	free(_output->meshes);
-	free(_output->objects);
-	free(_output->vertices);
-	free(_output);
+	free(_model->indices);
+	free(_model->materials);
+	free(_model->meshes);
+	free(_model->objects);
+	free(_model->vertices);
+	free(_model);
 }
 
 const char *objz_getError() {
