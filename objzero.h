@@ -9,10 +9,10 @@ extern "C" {
 
 #define OBJZ_NAME_MAX 64
 #define OBJZ_INDEX_FORMAT_AUTO 0
-#define OBJZ_INDEX_FORMAT_U32  2
-#define OBJZ_FLAG_TEXCOORDS 1<<0
-#define OBJZ_FLAG_NORMALS   1<<1
-#define OBJZ_FLAG_INDEX32   1<<2
+#define OBJZ_INDEX_FORMAT_U32  1
+#define OBJZ_FLAG_TEXCOORDS (1<<0)
+#define OBJZ_FLAG_NORMALS   (1<<1)
+#define OBJZ_FLAG_INDEX32   (1<<2)
 
 typedef struct {
 	char name[OBJZ_NAME_MAX];
