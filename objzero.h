@@ -40,6 +40,11 @@ typedef struct {
 	char name[OBJZ_NAME_MAX];
 	uint32_t firstMesh;
 	uint32_t numMeshes;
+	// If you want per-object vertices and indices, use these and subtract firstVertex from all the objzModel::indices in firstIndex to firstIndex + numIndices range.
+	uint32_t firstIndex;
+	uint32_t numIndices;
+	uint32_t firstVertex;
+	uint32_t numVertices;
 } objzObject;
 
 typedef struct {

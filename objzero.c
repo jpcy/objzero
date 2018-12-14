@@ -353,6 +353,7 @@ typedef struct {
 } Vertex;
 
 typedef struct {
+	uint32_t object;
 	uint32_t pos;
 	uint32_t texcoord;
 	uint32_t normal;
@@ -386,22 +387,24 @@ static uint32_t sdbmHash(const uint8_t *_data, uint32_t _size)
 	return hash;
 }
 
-static uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _pos, uint32_t _texcoord, uint32_t _normal) {
-	uint32_t hashData[3] = { 0 };
-	hashData[0] = _pos;
+static uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _object, uint32_t _pos, uint32_t _texcoord, uint32_t _normal) {
+	uint32_t hashData[4] = { 0 };
+	hashData[0] = _object;
+	hashData[1] = _pos;
 	if (_texcoord != UINT32_MAX)
-		hashData[1] = _texcoord;
+		hashData[2] = _texcoord;
 	if (_normal != UINT32_MAX)
-		hashData[2] = _normal;
+		hashData[3] = _normal;
 	const uint32_t hash = sdbmHash((const uint8_t *)hashData, sizeof(hashData)) % OBJZ_VERTEX_HASH_MAP_SLOTS;
 	uint32_t i = _map->slots[hash];
 	while (i != UINT32_MAX) {
 		const Index *index = OBJZ_ARRAY_ELEMENT(_map->indices, i);
-		if (index->pos == _pos && index->texcoord == _texcoord && index->normal == _normal)
+		if (index->object == _object && index->pos == _pos && index->texcoord == _texcoord && index->normal == _normal)
 			return i;
 		i = index->hashNext;
 	}
 	Index index;
+	index.object = _object;
 	index.pos = _pos;
 	index.texcoord = _texcoord;
 	index.normal = _normal;
@@ -422,15 +425,26 @@ static uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _pos, uint32_t
 	else
 		memcpy(vertex.normal, &_map->normals->data[_normal * normalSize], normalSize);
 	arrayAppend(&_map->vertices, &vertex);
-	return i;
+	return _map->slots[hash];
 }
 
-static void finalizeObject(objzObject *_object, Array *_objectIndices, Array *_objectFaceMaterials, Array *_meshes, Array *_indices, uint32_t _numMaterials) {
-	_object->firstMesh = _meshes->length;
-	_object->numMeshes = 0;
+static void finalizeObject(Array *_objects, Array *_objectIndices, Array *_objectFaceMaterials, VertexHashMap *_vertexHashMap, Array *_meshes, Array *_indices, uint32_t _numMaterials) {
+	objzObject *object = OBJZ_ARRAY_ELEMENT(*_objects, _objects->length - 1);
+	if (_objects->length > 1) {
+		const objzObject *prev = OBJZ_ARRAY_ELEMENT(*_objects, _objects->length - 2);
+		object->firstIndex = prev->firstIndex + prev->numIndices;
+		object->firstVertex = prev->firstVertex + prev->numVertices;
+	} else {
+		object->firstIndex = 0;
+		object->firstVertex = 0;
+	}
+	object->numIndices = _objectIndices->length;
+	object->numVertices = _vertexHashMap->vertices.length - object->firstVertex;
 	// We know exactly how many indices are about to be appended. Avoid what would probably be a bunch of reallocations by setting the capacity directly.
 	arraySetCapacity(_indices, _indices->capacity + _objectIndices->length);
 	// Create one mesh per material. No material (-1) gets a mesh too.
+	object->firstMesh = _meshes->length;
+	object->numMeshes = 0;
 	for (int material = -1; material < (int)_numMaterials; material++) {
 		objzMesh mesh;
 		mesh.firstIndex = _indices->length;
@@ -446,9 +460,12 @@ static void finalizeObject(objzObject *_object, Array *_objectIndices, Array *_o
 		}
 		if (mesh.numIndices > 0) {
 			arrayAppend(_meshes, &mesh);
-			_object->numMeshes++;
+			object->numMeshes++;
 		}
 	}
+	// Clear.
+	_objectIndices->length = 0;
+	_objectFaceMaterials->length = 0;
 }
 
 static uint32_t sanitizeVertexAttribIndex(int _index, uint32_t _n) {
@@ -515,7 +532,7 @@ objzModel *objz_load(const char *_filename) {
 				const uint32_t v = sanitizeVertexAttribIndex(triplet->v, positions.length);
 				const uint32_t vt = sanitizeVertexAttribIndex(triplet->vt, texcoords.length);
 				const uint32_t vn = sanitizeVertexAttribIndex(triplet->vn, normals.length);
-				const uint32_t index = vertexHashMapInsert(&vertexHashMap, v, vt, vn);
+				const uint32_t index = vertexHashMapInsert(&vertexHashMap, objects.length, v, vt, vn);
 				if (index > UINT16_MAX)
 					flags |= OBJZ_FLAG_INDEX32;
 				arrayAppend(&faceIndices, &index);
@@ -545,12 +562,10 @@ objzModel *objz_load(const char *_filename) {
 				goto error;
 			}
 			if (objects.length > 0)
-				finalizeObject(OBJZ_ARRAY_ELEMENT(objects, objects.length - 1), &objectIndices, &objectFaceMaterials, &meshes, &indices, materials.length);
+				finalizeObject(&objects, &objectIndices, &objectFaceMaterials, &vertexHashMap, &meshes, &indices, materials.length);
 			objzObject o;
 			OBJZ_STRNCPY(o.name, sizeof(o.name), token.text);
 			arrayAppend(&objects, &o);
-			objectIndices.length = 0;
-			objectFaceMaterials.length = 0;
 		} else if (OBJZ_STRICMP(token.text, "usemtl") == 0) {
 			tokenize(&lexer, &token, false);
 			if (token.text[0] == 0) {
@@ -592,7 +607,7 @@ objzModel *objz_load(const char *_filename) {
 		arrayAppend(&objects, &o);
 	}
 	if (objects.length > 0)
-		finalizeObject(OBJZ_ARRAY_ELEMENT(objects, objects.length - 1), &objectIndices, &objectFaceMaterials, &meshes, &indices, materials.length);
+		finalizeObject(&objects, &objectIndices, &objectFaceMaterials, &vertexHashMap, &meshes, &indices, materials.length);
 	model = malloc(sizeof(objzModel));
 	model->flags = flags;
 	if (s_indexFormat == OBJZ_INDEX_FORMAT_U32 || (flags & OBJZ_FLAG_INDEX32))

@@ -3,7 +3,8 @@
 #include "objzero.h"
 
 static void printModel(const objzModel *_model) {
-	/*for (uint32_t i = 0; i < _model->numMaterials; i++) {
+#if 0
+	for (uint32_t i = 0; i < _model->numMaterials; i++) {
 		objzMaterial *mat = &_model->materials[i];
 		printf("Material %s\n", mat->name);
 		printf("   d: %g\n", mat->d);
@@ -18,15 +19,20 @@ static void printModel(const objzModel *_model) {
 		printf("   map_Ka: %s\n", mat->map_Ka);
 		printf("   map_Kd: %s\n", mat->map_Kd);
 	}
+#endif
+#if 0
 	for (uint32_t i = 0; i < _model->numObjects; i++) {
 		objzObject *object = &_model->objects[i];
 		printf("Object: %s\n", object->name);
+		printf("   %d indices\n", object->numIndices);
+		printf("   %d vertices\n", object->numVertices);
 		printf("   %d meshes\n", object->numMeshes);
 		for (uint32_t j = 0; j < object->numMeshes; j++) {
 			objzMesh *mesh = &_model->meshes[object->firstMesh + j];
 			printf("      %d: '%s' material, %d indices\n", j, mesh->materialIndex < 0 ? "<empty>" : _model->materials[mesh->materialIndex].name, mesh->numIndices);
 		}
-	}*/
+	}
+#endif
 	printf("%u objects\n", _model->numObjects);
 	printf("%u materials\n", _model->numMaterials);
 	printf("%u meshes\n", _model->numMeshes);
