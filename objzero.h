@@ -7,12 +7,32 @@
 extern "C" {
 #endif
 
-#define OBJZ_NAME_MAX 64
+typedef void *(*objzReallocFunc)(void *_ptr, size_t _size);
+void objz_setRealloc(objzReallocFunc _realloc);
+
 #define OBJZ_INDEX_FORMAT_AUTO 0
 #define OBJZ_INDEX_FORMAT_U32  1
-#define OBJZ_FLAG_TEXCOORDS (1<<0)
-#define OBJZ_FLAG_NORMALS   (1<<1)
-#define OBJZ_FLAG_INDEX32   (1<<2)
+
+// OBJZ_INDEX_FORMAT_AUTO: Indices are uint32_t if UINT16_MAX threshold crossed, otherwise they are uint16_t.
+// OBJZ_INDEX_FORMAT_U32: Indices are always uint32_t.
+// Default is OBJZ_INDEX_FORMAT_AUTO.
+void objz_setIndexFormat(int _format);
+
+/*
+Default vertex data structure looks like this:
+
+typedef struct {
+float pos[3];
+float texcoord[2];
+float normal[3];
+} Vertex;
+
+texcoordOffset - optional: set to SIZE_MAX to ignore
+normalOffset - optional: set to SIZE_MAX to ignore
+*/
+void objz_setVertexFormat(size_t _stride, size_t _positionOffset, size_t _texcoordOffset, size_t _normalOffset);
+
+#define OBJZ_NAME_MAX 64
 
 typedef struct {
 	char name[OBJZ_NAME_MAX];
@@ -47,11 +67,17 @@ typedef struct {
 	uint32_t numVertices;
 } objzObject;
 
+#define OBJZ_FLAG_TEXCOORDS (1<<0)
+#define OBJZ_FLAG_NORMALS   (1<<1)
+#define OBJZ_FLAG_INDEX32   (1<<2)
+
 typedef struct {
 	uint32_t flags;
-	// Will be uint32_t if OBJZ_FLAG_INDEX32 flag is set, otherwise uint16_t.
+	
+	// uint32_t if OBJZ_FLAG_INDEX32 flag is set, otherwise uint16_t.
 	// See: objz_setIndexFormat
 	void *indices;
+
 	uint32_t numIndices;
 	objzMaterial *materials;
 	uint32_t numMaterials;
@@ -62,27 +88,6 @@ typedef struct {
 	void *vertices;
 	uint32_t numVertices;
 } objzModel;
-
-typedef void *(*objzReallocFunc)(void *_ptr, size_t _size);
-
-void objz_setRealloc(objzReallocFunc _realloc);
-
-// Default is OBJZ_INDEX_FORMAT_AUTO.
-void objz_setIndexFormat(int _format);
-
-/*
-Default vertex data structure looks like this:
-
-typedef struct {
-	float pos[3];
-	float texcoord[2];
-	float normal[3];
-} Vertex;
-
-texcoordOffset - optional: set to SIZE_MAX to ignore
-normalOffset - optional: set to SIZE_MAX to ignore
-*/
-void objz_setVertexFormat(size_t _stride, size_t _positionOffset, size_t _texcoordOffset, size_t _normalOffset);
 
 objzModel *objz_load(const char *_filename);
 void objz_destroy(objzModel *_model);
