@@ -69,6 +69,7 @@ static void arrayAppend(Array *_array, const void *_element) {
 	_array->length++;
 }
 
+#if 0
 static void arraySetCapacity(Array *_array, uint32_t _capacity) {
 	if (_capacity <= _array->capacity)
 		return;
@@ -79,6 +80,7 @@ static void arraySetCapacity(Array *_array, uint32_t _capacity) {
 		_array->data = realloc(_array->data, _array->capacity * _array->elementSize);
 	}
 }
+#endif
 
 #define OBJZ_ARRAY_ELEMENT(_array, _index) (void *)&(_array).data[(_array).elementSize * (_index)]
 
@@ -303,8 +305,6 @@ cleanup:
 	return result;
 }
 
-#define OBJZ_VERTEX_HASH_MAP_SLOTS 4096
-
 typedef struct {
 	float pos[3];
 	float texcoord[2];
@@ -320,7 +320,8 @@ typedef struct {
 } Index;
 
 typedef struct {
-	uint32_t slots[OBJZ_VERTEX_HASH_MAP_SLOTS];
+	uint32_t *slots;
+	uint32_t numSlots;
 	Array indices;
 	Array vertices;
 	const Array *positions;
@@ -329,13 +330,19 @@ typedef struct {
 } VertexHashMap;
 
 static void vertexHashMapInit(VertexHashMap *_map, const Array *_positions, const Array *_texcoords, const Array *_normals) {
-	for (int i = 0; i < OBJZ_VERTEX_HASH_MAP_SLOTS; i++)
+	_map->numSlots = _positions->length * 2;
+	_map->slots = malloc(sizeof(uint32_t) * _map->numSlots);
+	for (uint32_t i = 0; i < _map->numSlots; i++)
 		_map->slots[i] = UINT32_MAX;
-	arrayInit(&_map->indices, sizeof(Index), UINT16_MAX);
-	arrayInit(&_map->vertices, sizeof(Vertex), UINT16_MAX);
+	arrayInit(&_map->indices, sizeof(Index), _positions->length);
+	arrayInit(&_map->vertices, sizeof(Vertex), _positions->length);
 	_map->positions = _positions;
 	_map->texcoords = _texcoords;
 	_map->normals = _normals;
+}
+
+static void vertexHashMapDestroy(VertexHashMap *_map) {
+	free(_map->slots);
 }
 
 static uint32_t sdbmHash(const uint8_t *_data, uint32_t _size)
@@ -354,7 +361,7 @@ static uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _object, uint3
 		hashData[2] = _texcoord;
 	if (_normal != UINT32_MAX)
 		hashData[3] = _normal;
-	const uint32_t hash = sdbmHash((const uint8_t *)hashData, sizeof(hashData)) % OBJZ_VERTEX_HASH_MAP_SLOTS;
+	const uint32_t hash = sdbmHash((const uint8_t *)hashData, sizeof(hashData)) % _map->numSlots;
 	uint32_t i = _map->slots[hash];
 	while (i != UINT32_MAX) {
 		const Index *index = OBJZ_ARRAY_ELEMENT(_map->indices, i);
@@ -665,6 +672,7 @@ objzModel *objz_load(const char *_filename) {
 	free(normals.data);
 	free(faceIndexTriplets.data);
 	free(vertexHashMap.indices.data);
+	vertexHashMapDestroy(&vertexHashMap);
 	free(buffer);
 	return model;
 error:
