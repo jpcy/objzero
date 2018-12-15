@@ -180,47 +180,6 @@ typedef struct {
 	int vn;
 } FaceIndexTriplet;
 
-static bool parseFace(Lexer *_lexer, Array *_faceIndexTriplets) {
-	Token token;
-	_faceIndexTriplets->length = 0;
-	for (;;) {
-		tokenize(_lexer, &token, false);
-		if (token.text[0] == 0) {
-			if (isEol(_lexer))
-				break;
-			goto error;
-		}
-		// Parse v/vt/vn
-		const char *delim = "/";
-		char *start = token.text;
-		char *end = strstr(start, delim);
-		if (!end)
-			goto error;
-		*end = 0;
-		FaceIndexTriplet triplet;
-		triplet.v = atoi(start);
-		start = end + 1;
-		end = strstr(start, delim);
-		if (!end)
-			goto error;
-		*end = 0;
-		if (start == end)
-			triplet.vt = INT_MAX;
-		else
-			triplet.vt = atoi(start);
-		start = end + 1;
-		if (*start == 0)
-			triplet.vn = INT_MAX;
-		else
-			triplet.vn = atoi(start);
-		arrayAppend(_faceIndexTriplets, &triplet);
-	}
-	return true;
-error:
-	snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Failed to parse face", token.line, token.column);
-	return false;
-}
-
 static char *readFile(const char *_filename) {
 	FILE *f;
 	OBJZ_FOPEN(f, _filename, "rb");
@@ -428,46 +387,6 @@ static uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _object, uint3
 	return _map->slots[hash];
 }
 
-static void finalizeObject(Array *_objects, Array *_objectIndices, Array *_objectFaceMaterials, VertexHashMap *_vertexHashMap, Array *_meshes, Array *_indices, uint32_t _numMaterials) {
-	objzObject *object = OBJZ_ARRAY_ELEMENT(*_objects, _objects->length - 1);
-	if (_objects->length > 1) {
-		const objzObject *prev = OBJZ_ARRAY_ELEMENT(*_objects, _objects->length - 2);
-		object->firstIndex = prev->firstIndex + prev->numIndices;
-		object->firstVertex = prev->firstVertex + prev->numVertices;
-	} else {
-		object->firstIndex = 0;
-		object->firstVertex = 0;
-	}
-	object->numIndices = _objectIndices->length;
-	object->numVertices = _vertexHashMap->vertices.length - object->firstVertex;
-	// We know exactly how many indices are about to be appended. Avoid what would probably be a bunch of reallocations by setting the capacity directly.
-	arraySetCapacity(_indices, _indices->capacity + _objectIndices->length);
-	// Create one mesh per material. No material (-1) gets a mesh too.
-	object->firstMesh = _meshes->length;
-	object->numMeshes = 0;
-	for (int material = -1; material < (int)_numMaterials; material++) {
-		objzMesh mesh;
-		mesh.firstIndex = _indices->length;
-		mesh.numIndices = 0;
-		mesh.materialIndex = material;
-		for (uint32_t i = 0; i < _objectFaceMaterials->length; i++) {
-			const int *faceMaterial = OBJZ_ARRAY_ELEMENT(*_objectFaceMaterials, i);
-			if (*faceMaterial != material)
-				continue;
-			for (int k = 0; k < 3; k++)
-				arrayAppend(_indices, OBJZ_ARRAY_ELEMENT(*_objectIndices, i * 3 + k));
-			mesh.numIndices += 3;
-		}
-		if (mesh.numIndices > 0) {
-			arrayAppend(_meshes, &mesh);
-			object->numMeshes++;
-		}
-	}
-	// Clear.
-	_objectIndices->length = 0;
-	_objectFaceMaterials->length = 0;
-}
-
 static uint32_t sanitizeVertexAttribIndex(int _index, uint32_t _n) {
 	if (_index == INT_MAX)
 		return UINT32_MAX;
@@ -477,6 +396,17 @@ static uint32_t sanitizeVertexAttribIndex(int _index, uint32_t _n) {
 	// Convert from 1-indexed to 0-indexed.
 	return (uint32_t)(_index - 1);
 }
+
+typedef struct {
+	char name[OBJZ_NAME_MAX];
+	uint32_t firstFace;
+	uint32_t numFaces;
+} TempObject;
+
+typedef struct {
+	int32_t materialIndex;
+	FaceIndexTriplet indexTriplets[3];
+} TempFace;
 
 void objz_setIndexFormat(int _format) {
 	s_indexFormat = _format;
@@ -497,22 +427,16 @@ objzModel *objz_load(const char *_filename) {
 		snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "Failed to read file '%s'", _filename);
 		return NULL;
 	}
-	Array materials, meshes, objects, indices, positions, texcoords, normals;
-	Array objectIndices, objectFaceMaterials; // per object
-	Array faceIndexTriplets, faceIndices; // per face
+	// Parse the obj file and any material files.
+	Array materials, positions, texcoords, normals, tempObjects, tempFaces;
+	Array faceIndexTriplets; // Re-used per face.
 	arrayInit(&materials, sizeof(objzMaterial), 8);
-	arrayInit(&meshes, sizeof(objzMesh), 8);
-	arrayInit(&objects, sizeof(objzObject), 8);
-	arrayInit(&indices, sizeof(uint32_t), UINT16_MAX);
 	arrayInit(&positions, sizeof(float) * 3, UINT16_MAX);
 	arrayInit(&texcoords, sizeof(float) * 2, UINT16_MAX);
 	arrayInit(&normals, sizeof(float) * 3, UINT16_MAX);
-	arrayInit(&objectIndices, sizeof(uint32_t), UINT16_MAX);
-	arrayInit(&objectFaceMaterials, sizeof(int), UINT16_MAX);
+	arrayInit(&tempObjects, sizeof(TempObject), 8);
+	arrayInit(&tempFaces, sizeof(TempFace), UINT16_MAX);
 	arrayInit(&faceIndexTriplets, sizeof(FaceIndexTriplet), 8);
-	arrayInit(&faceIndices, sizeof(uint32_t), 8);
-	VertexHashMap vertexHashMap;
-	vertexHashMapInit(&vertexHashMap, &positions, &texcoords, &normals);
 	int currentMaterialIndex = -1;
 	uint32_t flags = 0;
 	Lexer lexer;
@@ -524,28 +448,69 @@ objzModel *objz_load(const char *_filename) {
 			if (isEof(&lexer))
 				break;
 		} else if (OBJZ_STRICMP(token.text, "f") == 0) {
-			if (!parseFace(&lexer, &faceIndexTriplets))
-				goto error;
-			faceIndices.length = 0;
-			for (uint32_t i = 0; i < faceIndexTriplets.length; i++) {
-				const FaceIndexTriplet *triplet = OBJZ_ARRAY_ELEMENT(faceIndexTriplets, i);
-				const uint32_t v = sanitizeVertexAttribIndex(triplet->v, positions.length);
-				const uint32_t vt = sanitizeVertexAttribIndex(triplet->vt, texcoords.length);
-				const uint32_t vn = sanitizeVertexAttribIndex(triplet->vn, normals.length);
-				const uint32_t index = vertexHashMapInsert(&vertexHashMap, objects.length, v, vt, vn);
-				if (index > UINT16_MAX)
-					flags |= OBJZ_FLAG_INDEX32;
-				arrayAppend(&faceIndices, &index);
+			// Get current object.
+			if (tempObjects.length == 0) {
+				// No objects specifed, but there's a face, so create one.
+				TempObject o;
+				o.name[0] = 0;
+				o.firstFace = o.numFaces = 0;
+				arrayAppend(&tempObjects, &o);
 			}
-			if (faceIndices.length < 3) {
+			TempObject *object = OBJZ_ARRAY_ELEMENT(tempObjects, tempObjects.length - 1);
+			// Parse triplets.
+			faceIndexTriplets.length = 0;
+			for (;;) {
+				Token tripletToken;
+				tokenize(&lexer, &tripletToken, false);
+				if (tripletToken.text[0] == 0) {
+					if (isEol(&lexer))
+						break;
+					snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Failed to parse face", tripletToken.line, tripletToken.column);
+					goto error;
+				}
+				// Parse v/vt/vn
+				const char *delim = "/";
+				char *start = tripletToken.text;
+				char *end = strstr(start, delim);
+				if (!end) {
+					snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Failed to parse face", tripletToken.line, tripletToken.column);
+					goto error;
+				}
+				*end = 0;
+				FaceIndexTriplet triplet;
+				triplet.v = atoi(start);
+				start = end + 1;
+				end = strstr(start, delim);
+				if (!end) {
+					snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Failed to parse face", tripletToken.line, tripletToken.column);
+					goto error;
+				}
+				*end = 0;
+				if (start == end)
+					triplet.vt = INT_MAX;
+				else
+					triplet.vt = atoi(start);
+				start = end + 1;
+				if (*start == 0)
+					triplet.vn = INT_MAX;
+				else
+					triplet.vn = atoi(start);
+				arrayAppend(&faceIndexTriplets, &triplet);
+			}
+			if (faceIndexTriplets.length < 3) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Face needs at least 3 indices", token.line, token.column);
 				goto error;
 			}
-			for (int i = 0; i < (int)faceIndices.length - 3 + 1; i++) {
-				arrayAppend(&objectIndices, OBJZ_ARRAY_ELEMENT(faceIndices, 0));
-				arrayAppend(&objectIndices, OBJZ_ARRAY_ELEMENT(faceIndices, i + 1));
-				arrayAppend(&objectIndices, OBJZ_ARRAY_ELEMENT(faceIndices, i + 2));
-				arrayAppend(&objectFaceMaterials, &currentMaterialIndex);
+			// Triangulate.
+			// TODO: handle concave
+			for (int i = 0; i < (int)faceIndexTriplets.length - 3 + 1; i++) {
+				TempFace face;
+				face.materialIndex = currentMaterialIndex;
+				face.indexTriplets[0] = *(FaceIndexTriplet *)OBJZ_ARRAY_ELEMENT(faceIndexTriplets, 0);
+				face.indexTriplets[1] = *(FaceIndexTriplet *)OBJZ_ARRAY_ELEMENT(faceIndexTriplets, i + 1);
+				face.indexTriplets[2] = *(FaceIndexTriplet *)OBJZ_ARRAY_ELEMENT(faceIndexTriplets, i + 2);
+				arrayAppend(&tempFaces, &face);
+				object->numFaces++;
 			}
 		} else if (OBJZ_STRICMP(token.text, "mtllib") == 0) {
 			tokenize(&lexer, &token, true);
@@ -561,11 +526,11 @@ objzModel *objz_load(const char *_filename) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'o'", token.line, token.column);
 				goto error;
 			}
-			if (objects.length > 0)
-				finalizeObject(&objects, &objectIndices, &objectFaceMaterials, &vertexHashMap, &meshes, &indices, materials.length);
-			objzObject o;
+			TempObject o;
 			OBJZ_STRNCPY(o.name, sizeof(o.name), token.text);
-			arrayAppend(&objects, &o);
+			o.firstFace = tempFaces.length;
+			o.numFaces = 0;
+			arrayAppend(&tempObjects, &o);
 		} else if (OBJZ_STRICMP(token.text, "usemtl") == 0) {
 			tokenize(&lexer, &token, false);
 			if (token.text[0] == 0) {
@@ -600,14 +565,61 @@ objzModel *objz_load(const char *_filename) {
 		}
 		skipLine(&lexer);
 	}
-	if (objects.length == 0 && objectIndices.length > 0) {
-		// No objects specifed, but there's some geometry, so create one.
-		objzObject o;
-		o.name[0] = 0;
-		arrayAppend(&objects, &o);
+	// Do some post-processing of parsed data:
+	//   * find unique vertices from separately index vertex attributes (pos, texcoord, normal).
+	//   * build meshes by batching object faces by material
+	Array meshes, objects, indices;
+	arrayInit(&meshes, sizeof(objzMesh), tempObjects.length * 4);
+	arrayInit(&objects, sizeof(objzObject), tempObjects.length);
+	arrayInit(&indices, sizeof(uint32_t), UINT16_MAX);
+	VertexHashMap vertexHashMap;
+	vertexHashMapInit(&vertexHashMap, &positions, &texcoords, &normals);
+	for (uint32_t i = 0; i < tempObjects.length; i++) {
+		const TempObject *tempObject = OBJZ_ARRAY_ELEMENT(tempObjects, i);
+		objzObject object;
+		OBJZ_STRNCPY(object.name, sizeof(object.name), tempObject->name);
+		// Create one mesh per material. No material (-1) gets a mesh too.
+		object.firstMesh = meshes.length;
+		object.numMeshes = 0;
+		for (int material = -1; material < (int)materials.length; material++) {
+			objzMesh mesh;
+			mesh.firstIndex = indices.length;
+			mesh.numIndices = 0;
+			mesh.materialIndex = material;
+			for (uint32_t j = 0; j < tempObject->numFaces; j++) {
+				const TempFace *face = OBJZ_ARRAY_ELEMENT(tempFaces, tempObject->firstFace + j);
+				if (face->materialIndex != material)
+					continue;
+				for (int k = 0; k < 3; k++) {
+					const FaceIndexTriplet *triplet = &face->indexTriplets[k];
+					const uint32_t v = sanitizeVertexAttribIndex(triplet->v, positions.length);
+					const uint32_t vt = sanitizeVertexAttribIndex(triplet->vt, texcoords.length);
+					const uint32_t vn = sanitizeVertexAttribIndex(triplet->vn, normals.length);
+					const uint32_t index = vertexHashMapInsert(&vertexHashMap, i, v, vt, vn);
+					if (index > UINT16_MAX)
+						flags |= OBJZ_FLAG_INDEX32;
+					arrayAppend(&indices, &index);
+					mesh.numIndices++;
+				}
+			}
+			if (mesh.numIndices > 0) {
+				arrayAppend(&meshes, &mesh);
+				object.numMeshes++;
+			}
+		}
+		if (objects.length > 0) {
+			const objzObject *prev = OBJZ_ARRAY_ELEMENT(objects, objects.length - 1);
+			object.firstIndex = prev->firstIndex + prev->numIndices;
+			object.firstVertex = prev->firstVertex + prev->numVertices;
+		} else {
+			object.firstIndex = 0;
+			object.firstVertex = 0;
+		}
+		object.numIndices = indices.length - object.firstIndex;
+		object.numVertices = vertexHashMap.vertices.length - object.firstVertex;
+		arrayAppend(&objects, &object);
 	}
-	if (objects.length > 0)
-		finalizeObject(&objects, &objectIndices, &objectFaceMaterials, &vertexHashMap, &meshes, &indices, materials.length);
+	// Build output data structure.
 	model = malloc(sizeof(objzModel));
 	model->flags = flags;
 	if (s_indexFormat == OBJZ_INDEX_FORMAT_U32 || (flags & OBJZ_FLAG_INDEX32))
@@ -651,27 +663,16 @@ objzModel *objz_load(const char *_filename) {
 	free(positions.data);
 	free(texcoords.data);
 	free(normals.data);
-	free(objectIndices.data);
-	free(objectFaceMaterials.data);
 	free(faceIndexTriplets.data);
-	free(faceIndices.data);
 	free(vertexHashMap.indices.data);
 	free(buffer);
 	return model;
 error:
 	free(materials.data);
-	free(meshes.data);
-	free(objects.data);
-	free(indices.data);
 	free(positions.data);
 	free(texcoords.data);
 	free(normals.data);
-	free(objectIndices.data);
-	free(objectFaceMaterials.data);
 	free(faceIndexTriplets.data);
-	free(faceIndices.data);
-	free(vertexHashMap.vertices.data);
-	free(vertexHashMap.indices.data);
 	free(buffer);
 	return NULL;
 }
