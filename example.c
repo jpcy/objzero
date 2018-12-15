@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <stdlib.h>
 #include <time.h>
 #include "objzero.h"
 
@@ -40,10 +41,31 @@ static void printModel(const objzModel *_model) {
 	printf("%u triangles\n", _model->numIndices / 3);
 }
 
+static size_t s_totalBytesUsed = 0;
+static size_t s_peakBytesUsed = 0;
+
+static void *custom_realloc(void *_ptr, size_t _size) {
+	uint32_t *realPtr = _ptr ? ((uint32_t *)_ptr) - 1 : NULL;
+	if (!_size) {
+		s_totalBytesUsed -= *realPtr;
+		return realloc(realPtr, 0);
+	}
+	_size += 4;
+	if (realPtr)
+		s_totalBytesUsed -= *realPtr;
+	uint32_t *newPtr = realloc(realPtr, _size);
+	*newPtr = _size;
+	s_totalBytesUsed += _size;
+	if (s_totalBytesUsed > s_peakBytesUsed)
+		s_peakBytesUsed = s_totalBytesUsed;
+	return newPtr + 1;
+}
+
 int main(int argc, char **argv) {
 	if (argc <= 1)
 		return 0;
 	printf("Loading '%s'\n", argv[1]);
+	objz_setRealloc(custom_realloc);
 	clock_t start = clock();
 	objzModel *model = objz_load(argv[1]);
 	clock_t end = clock();
@@ -52,6 +74,7 @@ int main(int argc, char **argv) {
 		return 1;
 	}
 	printf("%g milliseconds elapsed\n", (end - start) * 1000.0 / (double)CLOCKS_PER_SEC);
+	printf("%0.2fMB peak memory usage\n", s_peakBytesUsed / 1024.0f / 1024.0f);
 	printModel(model);
 	objz_destroy(model);
 	return 0;

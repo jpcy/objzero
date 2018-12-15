@@ -24,7 +24,29 @@
 #define OBJZ_MAX_TOKEN_LENGTH 256
 
 static char s_error[OBJZ_MAX_ERROR_LENGTH] = { 0 };
+static objzReallocFunc s_realloc = NULL;
 static uint32_t s_indexFormat = OBJZ_INDEX_FORMAT_AUTO;
+
+static void *objz_malloc(size_t _size) {
+	if (s_realloc)
+		return s_realloc(NULL, _size);
+	return malloc(_size);
+}
+
+static void *objz_realloc(void *_ptr, size_t _size) {
+	if (s_realloc)
+		return s_realloc(_ptr, _size);
+	return realloc(_ptr, _size);
+}
+
+static void objz_free(void *_ptr) {
+	if (!_ptr)
+		return;
+	if (s_realloc)
+		s_realloc(_ptr, 0);
+	else
+		free(_ptr);
+}
 
 typedef struct {
 	size_t stride;
@@ -59,11 +81,11 @@ static void arrayInit(Array *_array, size_t _elementSize, uint32_t _initialCapac
 
 static void arrayAppend(Array *_array, const void *_element) {
 	if (!_array->data) {
-		_array->data = malloc(_array->elementSize * _array->initialCapacity);
+		_array->data = objz_malloc(_array->elementSize * _array->initialCapacity);
 		_array->capacity = _array->initialCapacity;
 	} else if (_array->length == _array->capacity) {
 		_array->capacity *= 2;
-		_array->data = realloc(_array->data, _array->capacity * _array->elementSize);
+		_array->data = objz_realloc(_array->data, _array->capacity * _array->elementSize);
 	}
 	memcpy(&_array->data[_array->length * _array->elementSize], _element, _array->elementSize);
 	_array->length++;
@@ -77,7 +99,7 @@ static void arraySetCapacity(Array *_array, uint32_t _capacity) {
 		_array->initialCapacity = _capacity;
 	else {
 		_array->capacity = _capacity;
-		_array->data = realloc(_array->data, _array->capacity * _array->elementSize);
+		_array->data = objz_realloc(_array->data, _array->capacity * _array->elementSize);
 	}
 }
 #endif
@@ -194,11 +216,11 @@ static char *readFile(const char *_filename) {
 		fclose(f);
 		return NULL;
 	}
-	char *buffer = malloc(fileLength + 1);
+	char *buffer = objz_malloc(fileLength + 1);
 	const size_t bytesRead = fread(buffer, 1, fileLength, f);
 	fclose(f);
 	if (bytesRead < fileLength) {
-		free(buffer);
+		objz_free(buffer);
 		return NULL;
 	}
 	buffer[fileLength] = 0;
@@ -301,7 +323,7 @@ static int loadMaterialFile(const char *_objFilename, const char *_materialName,
 		arrayAppend(_materials, &mat);
 	result = 1;
 cleanup:
-	free(buffer);
+	objz_free(buffer);
 	return result;
 }
 
@@ -331,7 +353,7 @@ typedef struct {
 
 static void vertexHashMapInit(VertexHashMap *_map, const Array *_positions, const Array *_texcoords, const Array *_normals) {
 	_map->numSlots = _positions->length * 2;
-	_map->slots = malloc(sizeof(uint32_t) * _map->numSlots);
+	_map->slots = objz_malloc(sizeof(uint32_t) * _map->numSlots);
 	for (uint32_t i = 0; i < _map->numSlots; i++)
 		_map->slots[i] = UINT32_MAX;
 	arrayInit(&_map->indices, sizeof(Index), _positions->length);
@@ -342,7 +364,7 @@ static void vertexHashMapInit(VertexHashMap *_map, const Array *_positions, cons
 }
 
 static void vertexHashMapDestroy(VertexHashMap *_map) {
-	free(_map->slots);
+	objz_free(_map->slots);
 }
 
 static uint32_t sdbmHash(const uint8_t *_data, uint32_t _size)
@@ -414,6 +436,10 @@ typedef struct {
 	int32_t materialIndex;
 	FaceIndexTriplet indexTriplets[3];
 } TempFace;
+
+void objz_setRealloc(objzReallocFunc _realloc) {
+	s_realloc = _realloc;
+}
 
 void objz_setIndexFormat(int _format) {
 	s_indexFormat = _format;
@@ -627,18 +653,18 @@ objzModel *objz_load(const char *_filename) {
 		arrayAppend(&objects, &object);
 	}
 	// Build output data structure.
-	model = malloc(sizeof(objzModel));
+	model = objz_malloc(sizeof(objzModel));
 	model->flags = flags;
 	if (s_indexFormat == OBJZ_INDEX_FORMAT_U32 || (flags & OBJZ_FLAG_INDEX32))
 		model->indices = indices.data;
 	else {
 		flags &= ~OBJZ_FLAG_INDEX32;
-		model->indices = malloc(sizeof(uint16_t) * indices.length);
+		model->indices = objz_malloc(sizeof(uint16_t) * indices.length);
 		for (uint32_t i = 0; i < indices.length; i++) {
 			uint32_t *index = (uint32_t *)OBJZ_ARRAY_ELEMENT(indices, i);
 			((uint16_t *)model->indices)[i] = (uint16_t)*index;
 		}
-		free(indices.data);
+		objz_free(indices.data);
 	}
 	model->numIndices = indices.length;
 	model->materials = (objzMaterial *)materials.data;
@@ -652,7 +678,7 @@ objzModel *objz_load(const char *_filename) {
 		model->vertices = vertexHashMap.vertices.data;
 	} else {
 		// Copy vertex data into the desired format.
-		model->vertices = malloc(s_vertexDecl.stride * vertexHashMap.vertices.length);
+		model->vertices = objz_malloc(s_vertexDecl.stride * vertexHashMap.vertices.length);
 		memset(model->vertices, 0, s_vertexDecl.stride * vertexHashMap.vertices.length);
 		for (uint32_t i = 0; i < vertexHashMap.vertices.length; i++) {
 			uint8_t *vOut = &((uint8_t *)model->vertices)[i * s_vertexDecl.stride];
@@ -664,36 +690,36 @@ objzModel *objz_load(const char *_filename) {
 			if (s_vertexDecl.normalOffset != SIZE_MAX)
 				memcpy(&vOut[s_vertexDecl.normalOffset], vIn->normal, sizeof(float) * 3);
 		}
-		free(vertexHashMap.vertices.data);
+		objz_free(vertexHashMap.vertices.data);
 	}
 	model->numVertices = vertexHashMap.vertices.length;
-	free(positions.data);
-	free(texcoords.data);
-	free(normals.data);
-	free(faceIndexTriplets.data);
-	free(vertexHashMap.indices.data);
+	objz_free(positions.data);
+	objz_free(texcoords.data);
+	objz_free(normals.data);
+	objz_free(faceIndexTriplets.data);
+	objz_free(vertexHashMap.indices.data);
 	vertexHashMapDestroy(&vertexHashMap);
-	free(buffer);
+	objz_free(buffer);
 	return model;
 error:
-	free(materials.data);
-	free(positions.data);
-	free(texcoords.data);
-	free(normals.data);
-	free(faceIndexTriplets.data);
-	free(buffer);
+	objz_free(materials.data);
+	objz_free(positions.data);
+	objz_free(texcoords.data);
+	objz_free(normals.data);
+	objz_free(faceIndexTriplets.data);
+	objz_free(buffer);
 	return NULL;
 }
 
 void objz_destroy(objzModel *_model) {
 	if (!_model)
 		return;
-	free(_model->indices);
-	free(_model->materials);
-	free(_model->meshes);
-	free(_model->objects);
-	free(_model->vertices);
-	free(_model);
+	objz_free(_model->indices);
+	objz_free(_model->materials);
+	objz_free(_model->meshes);
+	objz_free(_model->objects);
+	objz_free(_model->vertices);
+	objz_free(_model);
 }
 
 const char *objz_getError() {

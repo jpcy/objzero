@@ -63,6 +63,10 @@ typedef struct {
 	uint32_t numVertices;
 } objzModel;
 
+typedef void *(*objzReallocFunc)(void *_ptr, size_t _size);
+
+void objz_setRealloc(objzReallocFunc _realloc);
+
 // Default is OBJZ_INDEX_FORMAT_AUTO.
 void objz_setIndexFormat(int _format);
 
