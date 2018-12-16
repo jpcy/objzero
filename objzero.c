@@ -198,12 +198,6 @@ static bool parseInt(Lexer *_lexer, int *_result) {
 	return true;
 }
 
-typedef struct {
-	int v;
-	int vt;
-	int vn;
-} FaceIndexTriplet;
-
 static char *readFile(const char *_filename) {
 	FILE *f;
 	OBJZ_FOPEN(f, _filename, "rb");
@@ -416,7 +410,8 @@ static uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _object, uint3
 	return _map->slots[hash];
 }
 
-static uint32_t sanitizeVertexAttribIndex(int _index, uint32_t _n) {
+// Convert 1-indexed relative vertex attrib index to a 0-indexed absolute index.
+static uint32_t fixVertexAttribIndex(int32_t _index, uint32_t _n) {
 	if (_index == INT_MAX)
 		return UINT32_MAX;
 	// Handle relative index.
@@ -433,8 +428,14 @@ typedef struct {
 } TempObject;
 
 typedef struct {
+	uint32_t v;
+	uint32_t vt;
+	uint32_t vn;
+} VertexAttribTriplet;
+
+typedef struct {
 	int32_t materialIndex;
-	FaceIndexTriplet indexTriplets[3];
+	VertexAttribTriplet vertices[3];
 } TempFace;
 
 void objz_setRealloc(objzReallocFunc _realloc) {
@@ -462,14 +463,14 @@ objzModel *objz_load(const char *_filename) {
 	}
 	// Parse the obj file and any material files.
 	Array materials, positions, texcoords, normals, tempObjects, tempFaces;
-	Array faceIndexTriplets; // Re-used per face.
+	Array vertexAttribTriplets; // Re-used per face.
 	arrayInit(&materials, sizeof(objzMaterial), 8);
 	arrayInit(&positions, sizeof(float) * 3, UINT16_MAX);
 	arrayInit(&texcoords, sizeof(float) * 2, UINT16_MAX);
 	arrayInit(&normals, sizeof(float) * 3, UINT16_MAX);
 	arrayInit(&tempObjects, sizeof(TempObject), 8);
 	arrayInit(&tempFaces, sizeof(TempFace), UINT16_MAX);
-	arrayInit(&faceIndexTriplets, sizeof(FaceIndexTriplet), 8);
+	arrayInit(&vertexAttribTriplets, sizeof(VertexAttribTriplet), 8);
 	int currentMaterialIndex = -1;
 	uint32_t flags = 0;
 	Lexer lexer;
@@ -491,7 +492,7 @@ objzModel *objz_load(const char *_filename) {
 			}
 			TempObject *object = OBJZ_ARRAY_ELEMENT(tempObjects, tempObjects.length - 1);
 			// Parse triplets.
-			faceIndexTriplets.length = 0;
+			vertexAttribTriplets.length = 0;
 			for (;;) {
 				Token tripletToken;
 				tokenize(&lexer, &tripletToken, false);
@@ -509,9 +510,9 @@ objzModel *objz_load(const char *_filename) {
 					snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Failed to parse face", tripletToken.line, tripletToken.column);
 					goto error;
 				}
+				int32_t v, vt, vn;
 				*end = 0;
-				FaceIndexTriplet triplet;
-				triplet.v = atoi(start);
+				v = atoi(start);
 				start = end + 1;
 				end = strstr(start, delim);
 				if (!end) {
@@ -520,28 +521,32 @@ objzModel *objz_load(const char *_filename) {
 				}
 				*end = 0;
 				if (start == end)
-					triplet.vt = INT_MAX;
+					vt = INT_MAX;
 				else
-					triplet.vt = atoi(start);
+					vt = atoi(start);
 				start = end + 1;
 				if (*start == 0)
-					triplet.vn = INT_MAX;
+					vn = INT_MAX;
 				else
-					triplet.vn = atoi(start);
-				arrayAppend(&faceIndexTriplets, &triplet);
+					vn = atoi(start);
+				VertexAttribTriplet triplet;
+				triplet.v = fixVertexAttribIndex(v, positions.length);
+				triplet.vt = fixVertexAttribIndex(vt, texcoords.length);
+				triplet.vn = fixVertexAttribIndex(vn, normals.length);
+				arrayAppend(&vertexAttribTriplets, &triplet);
 			}
-			if (faceIndexTriplets.length < 3) {
+			if (vertexAttribTriplets.length < 3) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Face needs at least 3 indices", token.line, token.column);
 				goto error;
 			}
 			// Triangulate.
 			// TODO: handle concave
-			for (int i = 0; i < (int)faceIndexTriplets.length - 3 + 1; i++) {
+			for (int i = 0; i < (int)vertexAttribTriplets.length - 3 + 1; i++) {
 				TempFace face;
 				face.materialIndex = currentMaterialIndex;
-				face.indexTriplets[0] = *(FaceIndexTriplet *)OBJZ_ARRAY_ELEMENT(faceIndexTriplets, 0);
-				face.indexTriplets[1] = *(FaceIndexTriplet *)OBJZ_ARRAY_ELEMENT(faceIndexTriplets, i + 1);
-				face.indexTriplets[2] = *(FaceIndexTriplet *)OBJZ_ARRAY_ELEMENT(faceIndexTriplets, i + 2);
+				face.vertices[0] = *(VertexAttribTriplet *)OBJZ_ARRAY_ELEMENT(vertexAttribTriplets, 0);
+				face.vertices[1] = *(VertexAttribTriplet *)OBJZ_ARRAY_ELEMENT(vertexAttribTriplets, i + 1);
+				face.vertices[2] = *(VertexAttribTriplet *)OBJZ_ARRAY_ELEMENT(vertexAttribTriplets, i + 2);
 				arrayAppend(&tempFaces, &face);
 				object->numFaces++;
 			}
@@ -624,11 +629,8 @@ objzModel *objz_load(const char *_filename) {
 				if (face->materialIndex != material)
 					continue;
 				for (int k = 0; k < 3; k++) {
-					const FaceIndexTriplet *triplet = &face->indexTriplets[k];
-					const uint32_t v = sanitizeVertexAttribIndex(triplet->v, positions.length);
-					const uint32_t vt = sanitizeVertexAttribIndex(triplet->vt, texcoords.length);
-					const uint32_t vn = sanitizeVertexAttribIndex(triplet->vn, normals.length);
-					const uint32_t index = vertexHashMapInsert(&vertexHashMap, i, v, vt, vn);
+					const VertexAttribTriplet *triplet = &face->vertices[k];
+					const uint32_t index = vertexHashMapInsert(&vertexHashMap, i, triplet->v, triplet->vt, triplet->vn);
 					if (index > UINT16_MAX)
 						flags |= OBJZ_FLAG_INDEX32;
 					arrayAppend(&indices, &index);
@@ -696,7 +698,7 @@ objzModel *objz_load(const char *_filename) {
 	objz_free(positions.data);
 	objz_free(texcoords.data);
 	objz_free(normals.data);
-	objz_free(faceIndexTriplets.data);
+	objz_free(vertexAttribTriplets.data);
 	objz_free(vertexHashMap.indices.data);
 	vertexHashMapDestroy(&vertexHashMap);
 	objz_free(buffer);
@@ -706,7 +708,7 @@ error:
 	objz_free(positions.data);
 	objz_free(texcoords.data);
 	objz_free(normals.data);
-	objz_free(faceIndexTriplets.data);
+	objz_free(vertexAttribTriplets.data);
 	objz_free(buffer);
 	return NULL;
 }
