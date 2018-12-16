@@ -212,26 +212,28 @@ static bool parseInt(Lexer *_lexer, int *_result) {
 	return true;
 }
 
-static char *readFile(const char *_filename) {
+static char *readFile(const char *_filename, size_t *_length) {
 	FILE *f;
 	OBJZ_FOPEN(f, _filename, "rb");
 	if (!f)
 		return NULL;
 	fseek(f, 0, SEEK_END);
-	const size_t fileLength = (size_t)ftell(f);
+	const size_t length = (size_t)ftell(f);
+	if (_length)
+		*_length = length;
 	fseek(f, 0, SEEK_SET);
-	if (fileLength <= 0) {
+	if (length <= 0) {
 		fclose(f);
 		return NULL;
 	}
-	char *buffer = objz_malloc(fileLength + 1);
-	const size_t bytesRead = fread(buffer, 1, fileLength, f);
+	char *buffer = objz_malloc(length + 1);
+	const size_t bytesRead = fread(buffer, 1, length, f);
 	fclose(f);
-	if (bytesRead < fileLength) {
+	if (bytesRead < length) {
 		objz_free(buffer);
 		return NULL;
 	}
-	buffer[fileLength] = 0;
+	buffer[length] = 0;
 	return buffer;
 }
 
@@ -279,7 +281,7 @@ static int loadMaterialFile(const char *_objFilename, const char *_materialName,
 	} else
 		OBJZ_STRNCPY(filename, sizeof(filename), _materialName);
 	int result = -1;
-	char *buffer = readFile(filename);
+	char *buffer = readFile(filename, NULL);
 	if (!buffer)
 		return result;
 	Lexer lexer;
@@ -424,6 +426,10 @@ static uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _object, uint3
 	return _map->slots[hash];
 }
 
+static uint32_t guessArrayInitialSize(size_t _fileLength, uint32_t _min, uint32_t _max) {
+	return (uint32_t)(_min + (_max - _min) * (_fileLength / 280000000.0));
+}
+
 // Convert 1-indexed relative vertex attrib index to a 0-indexed absolute index.
 static uint32_t fixVertexAttribIndex(int32_t _index, uint32_t _n) {
 	if (_index == INT_MAX)
@@ -470,7 +476,8 @@ void objz_setVertexFormat(size_t _stride, size_t _positionOffset, size_t _texcoo
 
 objzModel *objz_load(const char *_filename) {
 	objzModel *model = NULL;
-	char *buffer = readFile(_filename);
+	size_t fileLength;
+	char *buffer = readFile(_filename, &fileLength);
 	if (!buffer) {
 		snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "Failed to read file '%s'", _filename);
 		return NULL;
@@ -478,12 +485,12 @@ objzModel *objz_load(const char *_filename) {
 	// Parse the obj file and any material files.
 	Array materials, positions, texcoords, normals, tempObjects, tempFaces;
 	Array vertexAttribTriplets; // Re-used per face.
-	arrayInit(&materials, sizeof(objzMaterial), 8);
-	arrayInit(&positions, sizeof(float) * 3, UINT16_MAX);
-	arrayInit(&texcoords, sizeof(float) * 2, UINT16_MAX);
-	arrayInit(&normals, sizeof(float) * 3, UINT16_MAX);
-	arrayInit(&tempObjects, sizeof(TempObject), 8);
-	arrayInit(&tempFaces, sizeof(TempFace), UINT16_MAX);
+	arrayInit(&materials, sizeof(objzMaterial), 16);
+	arrayInit(&positions, sizeof(float) * 3, guessArrayInitialSize(fileLength, UINT16_MAX, 1<<21));
+	arrayInit(&texcoords, sizeof(float) * 2, guessArrayInitialSize(fileLength, UINT16_MAX, UINT16_MAX));
+	arrayInit(&normals, sizeof(float) * 3, guessArrayInitialSize(fileLength, 1<<14, 1<<14));
+	arrayInit(&tempObjects, sizeof(TempObject), guessArrayInitialSize(fileLength, 64, 64));
+	arrayInit(&tempFaces, sizeof(TempFace), guessArrayInitialSize(fileLength, 1<<17, 1<<23));
 	arrayInit(&vertexAttribTriplets, sizeof(VertexAttribTriplet), 8);
 	int currentMaterialIndex = -1;
 	uint32_t flags = 0;
@@ -623,7 +630,7 @@ objzModel *objz_load(const char *_filename) {
 	Array meshes, objects, indices;
 	arrayInit(&meshes, sizeof(objzMesh), tempObjects.length * 4);
 	arrayInit(&objects, sizeof(objzObject), tempObjects.length);
-	arrayInit(&indices, sizeof(uint32_t), UINT16_MAX);
+	arrayInit(&indices, sizeof(uint32_t), guessArrayInitialSize(fileLength, 1<<18, 1<<18));
 	VertexHashMap vertexHashMap;
 	vertexHashMapInit(&vertexHashMap, &positions, &texcoords, &normals);
 	for (uint32_t i = 0; i < tempObjects.length; i++) {
