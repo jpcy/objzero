@@ -28,15 +28,29 @@ static objzReallocFunc s_realloc = NULL;
 static uint32_t s_indexFormat = OBJZ_INDEX_FORMAT_AUTO;
 
 static void *objz_malloc(size_t _size) {
+	void *result;
 	if (s_realloc)
-		return s_realloc(NULL, _size);
-	return malloc(_size);
+		result = s_realloc(NULL, _size);
+	else
+		result = malloc(_size);
+	if (!result) {
+		fprintf(stderr, "Memory allocation failed\n");
+		abort();
+	}
+	return result;
 }
 
 static void *objz_realloc(void *_ptr, size_t _size) {
+	void *result;
 	if (s_realloc)
-		return s_realloc(_ptr, _size);
-	return realloc(_ptr, _size);
+		result = s_realloc(_ptr, _size);
+	else
+		result = realloc(_ptr, _size);
+	if (!result) {
+		fprintf(stderr, "Memory allocation failed\n");
+		abort();
+	}
+	return result;
 }
 
 static void objz_free(void *_ptr) {
