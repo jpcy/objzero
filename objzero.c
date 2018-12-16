@@ -1,4 +1,29 @@
-#include <assert.h>
+/*
+The MIT License (MIT)
+
+Copyright (c) 2018 Jonathan Young
+Copyright (c) 2012-2018 Syoyo Fujita and many contributors.
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+*/
+#include <float.h>
+#include <math.h>
 #include <stdbool.h>
 #include <stdlib.h>
 #include <stdio.h>
@@ -26,6 +51,22 @@
 static char s_error[OBJZ_MAX_ERROR_LENGTH] = { 0 };
 static objzReallocFunc s_realloc = NULL;
 static uint32_t s_indexFormat = OBJZ_INDEX_FORMAT_AUTO;
+
+typedef struct {
+	size_t stride;
+	size_t positionOffset;
+	size_t texcoordOffset;
+	size_t normalOffset;
+	bool custom;
+} VertexFormat;
+
+static VertexFormat s_vertexDecl = {
+	.stride = sizeof(float) * 3 * 2 * 3,
+	.positionOffset = 0,
+	.texcoordOffset = sizeof(float) * 3,
+	.normalOffset = sizeof(float) * 3 * 2,
+	.custom = false
+};
 
 static void *objz_malloc(size_t _size) {
 	void *result;
@@ -63,20 +104,23 @@ static void objz_free(void *_ptr) {
 }
 
 typedef struct {
-	size_t stride;
-	size_t positionOffset;
-	size_t texcoordOffset;
-	size_t normalOffset;
-	bool custom;
-} VertexFormat;
+	float x, y, z;
+} vec3;
 
-static VertexFormat s_vertexDecl = {
-	.stride = sizeof(float) * 3 * 2 * 3,
-	.positionOffset = 0,
-	.texcoordOffset = sizeof(float) * 3,
-	.normalOffset = sizeof(float) * 3 * 2,
-	.custom = false
-};
+#define OBJZ_VEC3_ABS(_out, _v) \
+	(_out).x = fabsf((_v).x);   \
+	(_out).y = fabsf((_v).y);   \
+	(_out).z = fabsf((_v).z);
+
+#define OBJZ_VEC3_CROSS(_out, _a, _b)             \
+	(_out).x = (_a).y * (_b).z - (_a).z * (_b).y; \
+	(_out).y = (_a).z * (_b).x - (_a).x * (_b).z; \
+	(_out).z = (_a).x * (_b).y - (_a).y * (_b).x;
+
+#define OBJZ_VEC3_SUB(_out, _a, _b) \
+	(_out).x = (_a).x - (_b).x;     \
+	(_out).y = (_a).y - (_b).y;     \
+	(_out).z = (_a).z - (_b).z;
 
 typedef struct {
 	uint8_t *data;
@@ -451,12 +495,139 @@ typedef struct {
 	uint32_t v;
 	uint32_t vt;
 	uint32_t vn;
-} VertexAttribTriplet;
+} IndexTriplet;
 
 typedef struct {
 	int32_t materialIndex;
-	VertexAttribTriplet vertices[3];
+	IndexTriplet indices[3];
 } TempFace;
+
+// code from https://wrf.ecse.rpi.edu//Research/Short_Notes/pnpoly.html
+static int pnpoly(int nvert, float *vertx, float *verty, float testx, float testy) {
+	int c = 0;
+	for (int i = 0, j = nvert - 1; i < nvert; j = i++) {
+		if (((verty[i] > testy) != (verty[j] > testy)) && (testx < (vertx[j] - vertx[i]) * (testy - verty[i]) / (verty[j] - verty[i]) + vertx[i]))
+			c = !c;
+	}
+	return c;
+}
+
+// Ear clipping triangulation from tinyobjloader
+// https://github.com/syoyo/tinyobjloader
+static void triangulate(const Array *_indices, const Array *_positions, Array *_tempIndices, Array *_faces, int _materialIndex) {
+	// find the two axes to work in
+	uint32_t axes[2] = { 1, 2 };
+	for (uint32_t i = 0; i < _indices->length; i++) {
+		const IndexTriplet *indices = (const IndexTriplet *)_indices->data;
+		vec3 v[3];
+		for (int j = 0; j < 3; j++)
+			v[j] = *(const vec3 *)OBJZ_ARRAY_ELEMENT(*_positions, indices[(i + j) % _indices->length].v);
+		vec3 edges[2];
+		OBJZ_VEC3_SUB(edges[0], v[1], v[0]);
+		OBJZ_VEC3_SUB(edges[1], v[2], v[1]);
+		vec3 corner;
+		OBJZ_VEC3_CROSS(corner, edges[0], edges[1]);
+		OBJZ_VEC3_ABS(corner, corner);
+		if (corner.x > FLT_EPSILON || corner.y > FLT_EPSILON || corner.z > FLT_EPSILON) {
+			// found a corner
+			if (!(corner.x > corner.y && corner.x > corner.z)) {
+				axes[0] = 0;
+				if (corner.z > corner.x && corner.z > corner.y)
+					axes[1] = 1;
+			}
+			break;
+		}
+	}
+	float area = 0;
+	for (uint32_t i = 0; i < _indices->length; i++) {
+		const IndexTriplet *i0 = OBJZ_ARRAY_ELEMENT(*_indices, (i + 0) % _indices->length);
+		const IndexTriplet *i1 = OBJZ_ARRAY_ELEMENT(*_indices, (i + 1) % _indices->length);
+		const float *v0 = OBJZ_ARRAY_ELEMENT(*_positions, i0->v);
+		const float *v1 = OBJZ_ARRAY_ELEMENT(*_positions, i1->v);
+		area += (v0[axes[0]] * v1[axes[1]] - v0[axes[1]] * v1[axes[0]]) * 0.5f;
+	}
+	// Copy vertices.
+	Array *remainingIndices = _tempIndices;
+	remainingIndices->length = 0;
+	for (uint32_t i = 0; i < _indices->length; i++)
+		arrayAppend(remainingIndices, OBJZ_ARRAY_ELEMENT(*_indices, i));
+	// How many iterations can we do without decreasing the remaining vertices.
+	uint32_t remainingIterations = remainingIndices->length;
+	uint32_t previousRemainingIndices = remainingIndices->length;
+	uint32_t guess_vert = 0;
+	while (remainingIndices->length > 3 && remainingIterations > 0) {
+		if (guess_vert >= remainingIndices->length)
+			guess_vert -= remainingIndices->length;
+		if (previousRemainingIndices != remainingIndices->length) {
+			// The number of remaining vertices decreased. Reset counters.
+			previousRemainingIndices = remainingIndices->length;
+			remainingIterations = remainingIndices->length;
+		} else {
+			// We didn't consume a vertex on previous iteration, reduce the
+			// available iterations.
+			remainingIterations--;
+		}
+		IndexTriplet *ind[3];
+		float vx[3];
+		float vy[3];
+		for (uint32_t i = 0; i < 3; i++) {
+			ind[i] = OBJZ_ARRAY_ELEMENT(*remainingIndices, (guess_vert + i) % remainingIndices->length);
+			const float *pos = (float *)OBJZ_ARRAY_ELEMENT(*_positions, ind[i]->v);
+			vx[i] = pos[axes[0]];
+			vy[i] = pos[axes[1]];
+		}
+		float edge0[2], edge1[2];
+		edge0[0] = vx[1] - vx[0];
+		edge0[1] = vy[1] - vy[0];
+		edge1[0] = vx[2] - vx[1];
+		edge1[1] = vy[2] - vy[1];
+		const float cross = edge0[0] * edge1[1] - edge0[1] * edge1[0];
+		// if an internal angle
+		if (cross * area < 0.0f) {
+			guess_vert += 1;
+			continue;
+		}
+		// check all other verts in case they are inside this triangle
+		bool overlap = false;
+		for (uint32_t otherVert = 3; otherVert < remainingIndices->length; ++otherVert) {
+			uint32_t idx = (guess_vert + otherVert) % remainingIndices->length;
+			if (idx >= remainingIndices->length)
+				continue; // ???
+			uint32_t ovi = ((IndexTriplet *)OBJZ_ARRAY_ELEMENT(*remainingIndices, idx))->v;
+			float tx = ((float *)OBJZ_ARRAY_ELEMENT(*_positions, ovi))[axes[0]];
+			float ty = ((float *)OBJZ_ARRAY_ELEMENT(*_positions, ovi))[axes[1]];
+			if (pnpoly(3, vx, vy, tx, ty)) {
+				overlap = true;
+				break;
+			}
+		}
+		if (overlap) {
+			guess_vert += 1;
+			continue;
+		}
+		// this triangle is an ear
+		TempFace face;
+		face.materialIndex = _materialIndex;
+		for (int i = 0; i < 3; i++)
+			face.indices[i] = *ind[i];
+		arrayAppend(_faces, &face);
+		// remove v1 from the list
+		uint32_t removed_vert_index = (guess_vert + 1) % remainingIndices->length;
+		while (removed_vert_index + 1 < remainingIndices->length) {
+			IndexTriplet *remainingIndicesData = (IndexTriplet *)remainingIndices->data;
+			remainingIndicesData[removed_vert_index] = remainingIndicesData[removed_vert_index + 1];
+			removed_vert_index += 1;
+		}
+		remainingIndices->length--;
+	}
+	if (remainingIndices->length == 3) {
+		TempFace face;
+		face.materialIndex = _materialIndex;
+		for (int i = 0; i < 3; i++)
+			face.indices[i] = *(IndexTriplet *)OBJZ_ARRAY_ELEMENT(*remainingIndices, i);
+		arrayAppend(_faces, &face);
+	}
+}
 
 void objz_setRealloc(objzReallocFunc _realloc) {
 	s_realloc = _realloc;
@@ -484,14 +655,15 @@ objzModel *objz_load(const char *_filename) {
 	}
 	// Parse the obj file and any material files.
 	Array materials, positions, texcoords, normals, tempObjects, tempFaces;
-	Array vertexAttribTriplets; // Re-used per face.
+	Array faceIndices, tempFaceIndices; // Re-used per face.
 	arrayInit(&materials, sizeof(objzMaterial), 16);
 	arrayInit(&positions, sizeof(float) * 3, guessArrayInitialSize(fileLength, UINT16_MAX, 1<<21));
 	arrayInit(&texcoords, sizeof(float) * 2, guessArrayInitialSize(fileLength, UINT16_MAX, UINT16_MAX));
 	arrayInit(&normals, sizeof(float) * 3, guessArrayInitialSize(fileLength, 1<<14, 1<<14));
 	arrayInit(&tempObjects, sizeof(TempObject), guessArrayInitialSize(fileLength, 64, 64));
 	arrayInit(&tempFaces, sizeof(TempFace), guessArrayInitialSize(fileLength, 1<<17, 1<<23));
-	arrayInit(&vertexAttribTriplets, sizeof(VertexAttribTriplet), 8);
+	arrayInit(&faceIndices, sizeof(IndexTriplet), 8);
+	arrayInit(&tempFaceIndices, sizeof(IndexTriplet), 8);
 	int currentMaterialIndex = -1;
 	uint32_t flags = 0;
 	Lexer lexer;
@@ -513,7 +685,7 @@ objzModel *objz_load(const char *_filename) {
 			}
 			TempObject *object = OBJZ_ARRAY_ELEMENT(tempObjects, tempObjects.length - 1);
 			// Parse triplets.
-			vertexAttribTriplets.length = 0;
+			faceIndices.length = 0;
 			for (;;) {
 				Token tripletToken;
 				tokenize(&lexer, &tripletToken, false);
@@ -550,26 +722,37 @@ objzModel *objz_load(const char *_filename) {
 					vn = INT_MAX;
 				else
 					vn = atoi(start);
-				VertexAttribTriplet triplet;
+				IndexTriplet triplet;
 				triplet.v = fixVertexAttribIndex(v, positions.length);
 				triplet.vt = fixVertexAttribIndex(vt, texcoords.length);
 				triplet.vn = fixVertexAttribIndex(vn, normals.length);
-				arrayAppend(&vertexAttribTriplets, &triplet);
+				arrayAppend(&faceIndices, &triplet);
 			}
-			if (vertexAttribTriplets.length < 3) {
-				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Face needs at least 3 indices", token.line, token.column);
+			if (faceIndices.length < 3) {
+				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Face needs at least 3 vertices", token.line, token.column);
 				goto error;
 			}
 			// Triangulate.
-			// TODO: handle concave
-			for (int i = 0; i < (int)vertexAttribTriplets.length - 3 + 1; i++) {
+			/*for (int i = 0; i < (int)faceIndices.length - 3 + 1; i++) {
 				TempFace face;
 				face.materialIndex = currentMaterialIndex;
-				face.vertices[0] = *(VertexAttribTriplet *)OBJZ_ARRAY_ELEMENT(vertexAttribTriplets, 0);
-				face.vertices[1] = *(VertexAttribTriplet *)OBJZ_ARRAY_ELEMENT(vertexAttribTriplets, i + 1);
-				face.vertices[2] = *(VertexAttribTriplet *)OBJZ_ARRAY_ELEMENT(vertexAttribTriplets, i + 2);
+				face.indices[0] = *(IndexTriplet *)OBJZ_ARRAY_ELEMENT(faceIndices, 0);
+				face.indices[1] = *(IndexTriplet *)OBJZ_ARRAY_ELEMENT(faceIndices, i + 1);
+				face.indices[2] = *(IndexTriplet *)OBJZ_ARRAY_ELEMENT(faceIndices, i + 2);
 				arrayAppend(&tempFaces, &face);
 				object->numFaces++;
+			}*/
+			if (faceIndices.length == 3) {
+				TempFace face;
+				face.materialIndex = currentMaterialIndex;
+				for (int i = 0; i < 3; i++)
+					face.indices[i] = *(IndexTriplet *)OBJZ_ARRAY_ELEMENT(faceIndices, i);
+				arrayAppend(&tempFaces, &face);
+				object->numFaces++;
+			} else {
+				const uint32_t prevTempFacesLength = tempFaces.length;
+				triangulate(&faceIndices, &positions, &tempFaceIndices, &tempFaces, currentMaterialIndex);
+				object->numFaces += tempFaces.length - prevTempFacesLength;
 			}
 		} else if (OBJZ_STRICMP(token.text, "mtllib") == 0) {
 			tokenize(&lexer, &token, true);
@@ -650,7 +833,7 @@ objzModel *objz_load(const char *_filename) {
 				if (face->materialIndex != material)
 					continue;
 				for (int k = 0; k < 3; k++) {
-					const VertexAttribTriplet *triplet = &face->vertices[k];
+					const IndexTriplet *triplet = &face->indices[k];
 					const uint32_t index = vertexHashMapInsert(&vertexHashMap, i, triplet->v, triplet->vt, triplet->vn);
 					if (index > UINT16_MAX)
 						flags |= OBJZ_FLAG_INDEX32;
@@ -719,7 +902,8 @@ objzModel *objz_load(const char *_filename) {
 	objz_free(positions.data);
 	objz_free(texcoords.data);
 	objz_free(normals.data);
-	objz_free(vertexAttribTriplets.data);
+	objz_free(faceIndices.data);
+	objz_free(tempFaceIndices.data);
 	objz_free(vertexHashMap.indices.data);
 	vertexHashMapDestroy(&vertexHashMap);
 	objz_free(buffer);
@@ -729,7 +913,8 @@ error:
 	objz_free(positions.data);
 	objz_free(texcoords.data);
 	objz_free(normals.data);
-	objz_free(vertexAttribTriplets.data);
+	objz_free(faceIndices.data);
+	objz_free(tempFaceIndices.data);
 	objz_free(buffer);
 	return NULL;
 }
