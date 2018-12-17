@@ -469,17 +469,6 @@ static uint32_t guessArrayInitialSize(size_t _fileLength, uint32_t _min, uint32_
 	return (uint32_t)(_min + (_max - _min) * (_fileLength / 280000000.0));
 }
 
-// Convert 1-indexed relative vertex attrib index to a 0-indexed absolute index.
-static uint32_t fixVertexAttribIndex(int32_t _index, uint32_t _n) {
-	if (_index == INT_MAX)
-		return UINT32_MAX;
-	// Handle relative index.
-	if (_index < 0)
-		return (uint32_t)(_index + _n);
-	// Convert from 1-indexed to 0-indexed.
-	return (uint32_t)(_index - 1);
-}
-
 typedef struct {
 	char name[OBJZ_NAME_MAX];
 	uint32_t firstFace;
@@ -497,6 +486,61 @@ typedef struct {
 	vec3 normal;
 	IndexTriplet indices[3];
 } TempFace;
+
+static bool parseVertexAttribIndices(Token *_token, int32_t *_out) {
+	int32_t *v = &_out[0];
+	int32_t *vt = &_out[1];
+	int32_t *vn = &_out[2];
+	*v = *vt = *vn = INT_MAX;
+	if (strlen(_token->text) == 0)
+		return false; // Empty token.
+	const char *delim = "/";
+	char *start = _token->text;
+	bool eol = false;
+	// v
+	char *end = strstr(start, delim);
+	if (!end) {
+		end = &_token->text[strlen(_token->text)];
+		eol = true;
+	} else if (end == start)
+		return false; // Token is just a delimiter.
+	*end = 0;
+	*v = atoi(start);
+	// vt
+	if (eol)
+		return true;  // No vt or vn.
+	start = end + 1;
+	if (*start == 0)
+		return true; // No vt or vn.
+	end = strstr(start, delim);
+	bool skipNormal = false;
+	if (!end) {
+		// No delimiter, must be no normal, i.e. "v/vt".
+		skipNormal = true;
+		end = &_token->text[strlen(_token->text) - 1];
+	}
+	*end = 0;
+	if (start != end)
+		*vt = atoi(start);
+	// vn
+	if (skipNormal)
+		return true;
+	start = end + 1;
+	if (*start != 0)
+		*vn = atoi(start);
+	return true;
+}
+
+// Convert 1-indexed relative vertex attrib index to a 0-indexed absolute index.
+static uint32_t fixVertexAttribIndex(int32_t _index, uint32_t _n) {
+	if (_index == INT_MAX)
+		return UINT32_MAX;
+	// Handle relative index.
+	if (_index < 0)
+		return (uint32_t)(_index + _n);
+	// Convert from 1-indexed to 0-indexed.
+	return (uint32_t)(_index - 1);
+}
 
 static void calculateFaceNormal(TempFace *_face, const Array *_positions) {
 	if (s_vertexDecl.normalOffset == SIZE_MAX)
@@ -716,43 +760,15 @@ objzModel *objz_load(const char *_filename) {
 					goto error;
 				}
 				// Parse v/vt/vn triplet.
-				// v
-				const char *delim = "/";
-				char *start = tripletToken.text;
-				char *end = strstr(start, delim);
-				if (!end) {
+				int32_t rawTriplet[3];
+				if (!parseVertexAttribIndices(&tripletToken, rawTriplet)) {
 					snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Failed to parse face", tripletToken.line, tripletToken.column);
 					goto error;
 				}
-				int32_t v;
-				*end = 0;
-				v = atoi(start);
-				// vt
-				start = end + 1;
-				end = strstr(start, delim);
-				bool skipNormal = false;
-				if (!end) {
-					// No delimiter, must be no normal, i.e. "v/vt".
-					skipNormal = true;
-					end = &tripletToken.text[strlen(tripletToken.text) - 1];
-				}
-				*end = 0;
-				int32_t vt;
-				if (start == end)
-					vt = INT_MAX;
-				else
-					vt = atoi(start);
-				// vn
-				int32_t vn = INT_MAX;
-				if (!skipNormal) {
-					start = end + 1;
-					if (*start != 0)
-						vn = atoi(start);
-				}
 				IndexTriplet triplet;
-				triplet.v = fixVertexAttribIndex(v, positions.length);
-				triplet.vt = fixVertexAttribIndex(vt, texcoords.length);
-				triplet.vn = fixVertexAttribIndex(vn, normals.length);
+				triplet.v = fixVertexAttribIndex(rawTriplet[0], positions.length);
+				triplet.vt = fixVertexAttribIndex(rawTriplet[1], texcoords.length);
+				triplet.vn = fixVertexAttribIndex(rawTriplet[2], normals.length);
 				arrayAppend(&faceIndices, &triplet);
 			}
 			if (faceIndices.length < 3) {

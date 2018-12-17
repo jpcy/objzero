@@ -33,7 +33,9 @@ project "example"
 	warnings "Extra"
 	files { "example.c" }
 	links { "objzero" }
-	filter { "system:windows", "action:gmake", "platforms:x86" }
-		gccprefix "i686-w64-mingw32-"
-	filter { "system:windows", "action:gmake", "platforms:x86_64" }
-		gccprefix "x86_64-w64-mingw32-"
+
+project "tests"
+	kind "ConsoleApp"
+	language "C"
+	cdialect "C99"
+	files { "tests.c" }
