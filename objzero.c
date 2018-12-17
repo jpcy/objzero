@@ -149,29 +149,16 @@ static void arrayAppend(Array *_array, const void *_element) {
 	_array->length++;
 }
 
-#if 0
-static void arraySetCapacity(Array *_array, uint32_t _capacity) {
-	if (_capacity <= _array->capacity)
-		return;
-	if (!_array->data)
-		_array->initialCapacity = _capacity;
-	else {
-		_array->capacity = _capacity;
-		_array->data = objz_realloc(_array->data, _array->capacity * _array->elementSize);
-	}
-}
-#endif
-
 #define OBJZ_ARRAY_ELEMENT(_array, _index) (void *)&(_array).data[(_array).elementSize * (_index)]
 
 typedef struct {
 	char *buf;
-	int line, column;
+	uint32_t line, column;
 } Lexer;
 
 typedef struct {
 	char text[OBJZ_MAX_TOKEN_LENGTH];
-	int line, column;
+	uint32_t line, column;
 } Token;
 
 static void initLexer(Lexer *_lexer, char *_buf) {
@@ -218,7 +205,7 @@ static void skipWhitespace(Lexer *_lexer) {
 }
 
 static void tokenize(Lexer *_lexer, Token *_token, bool includeWhitespace) {
-	int i = 0;
+	uint32_t i = 0;
 	skipWhitespace(_lexer);
 	_token->line = _lexer->line;
 	_token->column = _lexer->column;
@@ -232,9 +219,9 @@ static void tokenize(Lexer *_lexer, Token *_token, bool includeWhitespace) {
 	_token->text[i] = 0;
 }
 
-static bool parseFloats(Lexer *_lexer, float *_result, int n) {
+static bool parseFloats(Lexer *_lexer, float *_result, uint32_t n) {
 	Token token;
-	for (int i = 0; i < n; i++) {
+	for (uint32_t i = 0; i < n; i++) {
 		tokenize(_lexer, &token, false);
 		if (strlen(token.text) == 0) {
 			snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Error parsing float", token.line, token.column);
@@ -245,14 +232,14 @@ static bool parseFloats(Lexer *_lexer, float *_result, int n) {
 	return true;
 }
 
-static bool parseInt(Lexer *_lexer, int *_result) {
+static bool parseInt(Lexer *_lexer, int32_t *_result) {
 	Token token;
 	tokenize(_lexer, &token, false);
 	if (strlen(token.text) == 0) {
 		snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Error parsing int", token.line, token.column);
 		return false;
 	}
-	*_result = atoi(token.text);
+	*_result = (int32_t)atoi(token.text);
 	return true;
 }
 
@@ -287,9 +274,9 @@ static char *readFile(const char *_filename, size_t *_length) {
 
 typedef struct {
 	const char *name;
-	int type;
+	uint32_t type;
 	size_t offset;
-	int n;
+	uint32_t n;
 } MaterialTokenDef;
 
 static MaterialTokenDef s_materialTokens[] = {
@@ -310,7 +297,7 @@ static void materialInit(objzMaterial *_mat) {
 	memset(_mat, 0, sizeof(*_mat));
 }
 
-static int loadMaterialFile(const char *_objFilename, const char *_materialName, Array *_materials) {
+static bool loadMaterialFile(const char *_objFilename, const char *_materialName, Array *_materials) {
 	char filename[256] = { 0 };
 	const char *lastSlash = strrchr(_objFilename, '/');
 	if (!lastSlash)
@@ -324,7 +311,7 @@ static int loadMaterialFile(const char *_objFilename, const char *_materialName,
 		OBJZ_STRNCAT(filename, sizeof(filename), _materialName, sizeof(filename) - strlen(filename) - 1);
 	} else
 		OBJZ_STRNCPY(filename, sizeof(filename), _materialName);
-	int result = -1;
+	bool result = false;
 	char *buffer = readFile(filename, NULL);
 	if (!buffer)
 		return result;
@@ -364,7 +351,7 @@ static int loadMaterialFile(const char *_objFilename, const char *_materialName,
 						if (!parseFloats(&lexer, (float *)dest, mtd->n))
 							goto cleanup;
 					} else if (mtd->type == OBJZ_MAT_TOKEN_INT) {
-						if (!parseInt(&lexer, (int *)dest))
+						if (!parseInt(&lexer, (int32_t *)dest))
 							goto cleanup;
 					}
 					break;
@@ -375,7 +362,7 @@ static int loadMaterialFile(const char *_objFilename, const char *_materialName,
 	}
 	if (mat.name[0] != 0)
 		arrayAppend(_materials, &mat);
-	result = 1;
+	result = true;
 cleanup:
 	objz_free(buffer);
 	return result;
@@ -504,7 +491,7 @@ typedef struct {
 
 // code from https://wrf.ecse.rpi.edu//Research/Short_Notes/pnpoly.html
 static int pnpoly(int nvert, float *vertx, float *verty, float testx, float testy) {
-	int c = 0;
+	bool c = false;
 	for (int i = 0, j = nvert - 1; i < nvert; j = i++) {
 		if (((verty[i] > testy) != (verty[j] > testy)) && (testx < (vertx[j] - vertx[i]) * (testy - verty[i]) / (verty[j] - verty[i]) + vertx[i]))
 			c = !c;
@@ -514,7 +501,7 @@ static int pnpoly(int nvert, float *vertx, float *verty, float testx, float test
 
 // Ear clipping triangulation from tinyobjloader
 // https://github.com/syoyo/tinyobjloader
-static void triangulate(const Array *_indices, const Array *_positions, Array *_tempIndices, Array *_faces, int _materialIndex) {
+static void triangulate(const Array *_indices, const Array *_positions, Array *_tempIndices, Array *_faces, int32_t _materialIndex) {
 	// find the two axes to work in
 	uint32_t axes[2] = { 1, 2 };
 	for (uint32_t i = 0; i < _indices->length; i++) {
@@ -633,7 +620,7 @@ void objz_setRealloc(objzReallocFunc _realloc) {
 	s_realloc = _realloc;
 }
 
-void objz_setIndexFormat(int _format) {
+void objz_setIndexFormat(uint32_t _format) {
 	s_indexFormat = _format;
 }
 
@@ -664,7 +651,7 @@ objzModel *objz_load(const char *_filename) {
 	arrayInit(&tempFaces, sizeof(TempFace), guessArrayInitialSize(fileLength, 1<<17, 1<<23));
 	arrayInit(&faceIndices, sizeof(IndexTriplet), 8);
 	arrayInit(&tempFaceIndices, sizeof(IndexTriplet), 8);
-	int currentMaterialIndex = -1;
+	int32_t currentMaterialIndex = -1;
 	uint32_t flags = 0;
 	Lexer lexer;
 	initLexer(&lexer, buffer);
@@ -733,15 +720,6 @@ objzModel *objz_load(const char *_filename) {
 				goto error;
 			}
 			// Triangulate.
-			/*for (int i = 0; i < (int)faceIndices.length - 3 + 1; i++) {
-				TempFace face;
-				face.materialIndex = currentMaterialIndex;
-				face.indices[0] = *(IndexTriplet *)OBJZ_ARRAY_ELEMENT(faceIndices, 0);
-				face.indices[1] = *(IndexTriplet *)OBJZ_ARRAY_ELEMENT(faceIndices, i + 1);
-				face.indices[2] = *(IndexTriplet *)OBJZ_ARRAY_ELEMENT(faceIndices, i + 2);
-				arrayAppend(&tempFaces, &face);
-				object->numFaces++;
-			}*/
 			if (faceIndices.length == 3) {
 				TempFace face;
 				face.materialIndex = currentMaterialIndex;
@@ -787,23 +765,23 @@ objzModel *objz_load(const char *_filename) {
 					break;
 				}
 			}
-		} else if (OBJZ_STRICMP(token.text, "v") == 0 || OBJZ_STRICMP(token.text, "vn") == 0 || OBJZ_STRICMP(token.text, "vt") == 0) {
-			int n = 3;
-			if (OBJZ_STRICMP(token.text, "vt") == 0)
-				n = 2;
-			float vertex[3];
-			if (!parseFloats(&lexer, vertex, n))
+		} else if (OBJZ_STRICMP(token.text, "v") == 0) {
+			float pos[3];
+			if (!parseFloats(&lexer, pos, 3))
 				goto error;
-			if (OBJZ_STRICMP(token.text, "v") == 0)
-				arrayAppend(&positions, vertex);
-			else if (OBJZ_STRICMP(token.text, "vn") == 0) {
-				arrayAppend(&normals, vertex);
-				flags |= OBJZ_FLAG_NORMALS;
-			}
-			else if (OBJZ_STRICMP(token.text, "vt") == 0) {
-				arrayAppend(&texcoords, vertex);
-				flags |= OBJZ_FLAG_TEXCOORDS;
-			}
+			arrayAppend(&positions, pos);
+		} else if (OBJZ_STRICMP(token.text, "vn") == 0) {
+			float normal[3];
+			if (!parseFloats(&lexer, normal, 3))
+				goto error;
+			arrayAppend(&normals, normal);
+			flags |= OBJZ_FLAG_NORMALS;
+		} else if (OBJZ_STRICMP(token.text, "vt") == 0) {
+			float texcoord[2];
+			if (!parseFloats(&lexer, texcoord, 2))
+				goto error;
+			arrayAppend(&texcoords, texcoord);
+			flags |= OBJZ_FLAG_TEXCOORDS;
 		}
 		skipLine(&lexer);
 	}
@@ -823,7 +801,7 @@ objzModel *objz_load(const char *_filename) {
 		// Create one mesh per material. No material (-1) gets a mesh too.
 		object.firstMesh = meshes.length;
 		object.numMeshes = 0;
-		for (int material = -1; material < (int)materials.length; material++) {
+		for (int32_t material = -1; material < (int32_t)materials.length; material++) {
 			objzMesh mesh;
 			mesh.firstIndex = indices.length;
 			mesh.numIndices = 0;

@@ -16,7 +16,7 @@ void objz_setRealloc(objzReallocFunc _realloc);
 // OBJZ_INDEX_FORMAT_AUTO: Indices are uint32_t if UINT16_MAX threshold crossed, otherwise they are uint16_t.
 // OBJZ_INDEX_FORMAT_U32: Indices are always uint32_t.
 // Default is OBJZ_INDEX_FORMAT_AUTO.
-void objz_setIndexFormat(int _format);
+void objz_setIndexFormat(uint32_t _format);
 
 /*
 Default vertex data structure looks like this:
@@ -37,7 +37,7 @@ void objz_setVertexFormat(size_t _stride, size_t _positionOffset, size_t _texcoo
 typedef struct {
 	char name[OBJZ_NAME_MAX];
 	float d;
-	int illum;
+	int32_t illum;
 	float Ka[3];
 	float Kd[3];
 	float Ke[3];

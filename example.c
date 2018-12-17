@@ -56,7 +56,7 @@ static void *custom_realloc(void *_ptr, size_t _size) {
 	uint32_t *newPtr = realloc(realPtr, _size);
 	if (!newPtr)
 		return NULL;
-	*newPtr = _size;
+	*newPtr = (uint32_t)_size;
 	s_totalBytesUsed += _size;
 	if (s_totalBytesUsed > s_peakBytesUsed)
 		s_peakBytesUsed = s_totalBytesUsed;
