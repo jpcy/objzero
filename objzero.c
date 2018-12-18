@@ -846,9 +846,9 @@ objzModel *objz_load(const char *_filename) {
 	//   * find unique vertices from separately index vertex attributes (pos, texcoord, normal).
 	//   * build meshes by batching object faces by material
 	Array meshes, objects, indices;
-	arrayInit(&meshes, sizeof(objzMesh), tempObjects.length * 4);
-	arrayInit(&objects, sizeof(objzObject), tempObjects.length);
-	arrayInit(&indices, sizeof(uint32_t), guessArrayInitialSize(fileLength, 1<<18, 1<<18));
+	arrayInit(&meshes, sizeof(objzMesh), tempObjects.length * 4); // Guess capacity: 4 meshes per object
+	arrayInit(&objects, sizeof(objzObject), tempObjects.length); // Exact capacity
+	arrayInit(&indices, sizeof(uint32_t), tempFaces.length * 3); // Exact capacity
 	VertexHashMap vertexHashMap;
 	vertexHashMapInit(&vertexHashMap, &positions, &texcoords, &normals);
 	for (uint32_t i = 0; i < tempObjects.length; i++) {
