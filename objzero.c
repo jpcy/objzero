@@ -169,16 +169,13 @@ typedef struct {
 	uint32_t line, column;
 } Token;
 
-static void initLexer(Lexer *_lexer, char *_buf) {
-	_lexer->buf = _buf;
-	_lexer->line = _lexer->column = 1;
+static void initLexer(Lexer *_lexer) {
+	_lexer->buf = NULL;
+	_lexer->column = 1;
+	_lexer->line = 0;
 }
 
 static bool isEol(const Lexer *_lexer) {
-	return (_lexer->buf[0] == '\n' || (_lexer->buf[0] == '\r' && _lexer->buf[1] != '\n'));
-}
-
-static bool isEof(const Lexer *_lexer) {
 	return (_lexer->buf[0] == 0);
 }
 
@@ -186,24 +183,9 @@ static bool isWhitespace(const Lexer *_lexer) {
 	return (_lexer->buf[0] == ' ' || _lexer->buf[0] == '\t' || _lexer->buf[0] == '\r');
 }
 
-static void skipLine(Lexer *_lexer) {
-	for (;;) {
-		if (isEof(_lexer))
-			break;
-		if (isEol(_lexer)) {
-			_lexer->column = 1;
-			_lexer->line++;
-			_lexer->buf++;
-			break;
-		}
-		_lexer->buf++;
-		_lexer->column++;
-	}
-}
-
 static void skipWhitespace(Lexer *_lexer) {
 	for (;;) {
-		if (isEof(_lexer))
+		if (isEol(_lexer))
 			break;
 		if (!isWhitespace(_lexer))
 			break;
@@ -212,13 +194,19 @@ static void skipWhitespace(Lexer *_lexer) {
 	}
 }
 
+static void lexerSetLine(Lexer *_lexer, char *_buf) {
+	_lexer->column = 1;
+	_lexer->line++;
+	_lexer->buf = _buf;
+}
+
 static void tokenize(Lexer *_lexer, Token *_token, bool includeWhitespace) {
 	uint32_t i = 0;
 	skipWhitespace(_lexer);
 	_token->line = _lexer->line;
 	_token->column = _lexer->column;
 	for (;;) {
-		if (isEof(_lexer) || isEol(_lexer) || (!includeWhitespace && isWhitespace(_lexer)))
+		if (isEol(_lexer) || (!includeWhitespace && isWhitespace(_lexer)))
 			break;
 		_token->text[i++] = _lexer->buf[0];
 		_lexer->buf++;
@@ -251,29 +239,60 @@ static bool parseInt(Lexer *_lexer, int32_t *_result) {
 	return true;
 }
 
-static char *readFile(const char *_filename, size_t *_length) {
-	FILE *f;
-	OBJZ_FOPEN(f, _filename, "rb");
-	if (!f)
-		return NULL;
-	fseek(f, 0, SEEK_END);
-	const size_t length = (size_t)ftell(f);
-	if (_length)
-		*_length = length;
-	fseek(f, 0, SEEK_SET);
-	if (length <= 0) {
-		fclose(f);
-		return NULL;
+typedef struct {
+	char *buffer;
+	size_t length;
+	size_t pos;
+} File;
+
+bool fileOpen(File *_file, const char *_filename) {
+	FILE *handle;
+	OBJZ_FOPEN(handle, _filename, "rb");
+	if (!handle)
+		return false;
+	fseek(handle, 0, SEEK_END);
+	_file->length = (size_t)ftell(handle);
+	fseek(handle, 0, SEEK_SET);
+	if (_file->length == 0) {
+		fclose(handle);
+		return false;
 	}
-	char *buffer = objz_malloc(length + 1);
-	const size_t bytesRead = fread(buffer, 1, length, f);
-	fclose(f);
-	if (bytesRead < length) {
-		objz_free(buffer);
-		return NULL;
+	_file->pos = 0;
+	_file->buffer = objz_malloc(_file->length + 1);
+	const size_t bytesRead = fread(_file->buffer, 1, _file->length, handle);
+	fclose(handle);
+	if (bytesRead < _file->length) {
+		objz_free(_file->buffer);
+		return false;
 	}
-	buffer[length] = 0;
-	return buffer;
+	_file->buffer[_file->length] = 0;
+	return true;
+}
+
+void fileClose(File *_file) {
+	objz_free(_file->buffer);
+}
+
+char *fileReadLine(File *_file) {
+	if (_file->buffer[_file->pos] == 0)
+		return NULL; // eof
+	char *start = &_file->buffer[_file->pos];
+	// Find eol. Newline is replaced with a null terminator. Position is set to the start of the next line.
+	for (;;) {
+		char *c = &_file->buffer[_file->pos];
+		if (*c == 0) {
+			break;
+		}
+		if (*c == '\r')
+			*c = 0; // Null terminate here, but keep reading until newline.
+		else if (*c == '\n') {
+			*c = 0;
+			_file->pos++;
+			break;
+		}
+		_file->pos++;
+	}
+	return start;
 }
 
 #define OBJZ_MAT_TOKEN_STRING 0
@@ -320,20 +339,21 @@ static bool loadMaterialFile(const char *_objFilename, const char *_materialName
 	} else
 		OBJZ_STRNCPY(filename, sizeof(filename), _materialName);
 	bool result = false;
-	char *buffer = readFile(filename, NULL);
-	if (!buffer)
+	File file;
+	if (!fileOpen(&file, filename))
 		return result;
 	Lexer lexer;
-	initLexer(&lexer, buffer);
+	initLexer(&lexer);
 	Token token;
 	objzMaterial mat;
 	materialInit(&mat);
 	for (;;) {
+		char *line = fileReadLine(&file);
+		if (!line)
+			break;
+		lexerSetLine(&lexer, line);
 		tokenize(&lexer, &token, false);
-		if (token.text[0] == 0) {
-			if (isEof(&lexer))
-				break;
-		} else if (OBJZ_STRICMP(token.text, "newmtl") == 0) {
+		if (OBJZ_STRICMP(token.text, "newmtl") == 0) {
 			tokenize(&lexer, &token, false);
 			if (token.text[0] == 0) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'newmtl'", token.line, token.column);
@@ -366,13 +386,12 @@ static bool loadMaterialFile(const char *_objFilename, const char *_materialName
 				}
 			}
 		}
-		skipLine(&lexer);
 	}
 	if (mat.name[0] != 0)
 		arrayAppend(_materials, &mat);
 	result = true;
 cleanup:
-	objz_free(buffer);
+	fileClose(&file);
 	return result;
 }
 
@@ -710,10 +729,8 @@ void objz_setVertexFormat(size_t _stride, size_t _positionOffset, size_t _texcoo
 }
 
 objzModel *objz_load(const char *_filename) {
-	objzModel *model = NULL;
-	size_t fileLength;
-	char *buffer = readFile(_filename, &fileLength);
-	if (!buffer) {
+	File file;
+	if (!fileOpen(&file, _filename)) {
 		snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "Failed to read file '%s'", _filename);
 		return NULL;
 	}
@@ -721,24 +738,25 @@ objzModel *objz_load(const char *_filename) {
 	Array materials, positions, texcoords, normals, tempObjects, tempFaces;
 	Array faceIndices, tempFaceIndices; // Re-used per face.
 	arrayInit(&materials, sizeof(objzMaterial), 16);
-	arrayInit(&positions, sizeof(float) * 3, guessArrayInitialSize(fileLength, UINT16_MAX, 1<<21));
-	arrayInit(&texcoords, sizeof(float) * 2, guessArrayInitialSize(fileLength, UINT16_MAX, UINT16_MAX));
-	arrayInit(&normals, sizeof(float) * 3, guessArrayInitialSize(fileLength, 1<<14, 1<<14));
-	arrayInit(&tempObjects, sizeof(TempObject), guessArrayInitialSize(fileLength, 64, 64));
-	arrayInit(&tempFaces, sizeof(TempFace), guessArrayInitialSize(fileLength, 1<<17, 1<<23));
+	arrayInit(&positions, sizeof(float) * 3, guessArrayInitialSize(file.length, UINT16_MAX, 1<<21));
+	arrayInit(&texcoords, sizeof(float) * 2, guessArrayInitialSize(file.length, UINT16_MAX, UINT16_MAX));
+	arrayInit(&normals, sizeof(float) * 3, guessArrayInitialSize(file.length, 1<<14, 1<<14));
+	arrayInit(&tempObjects, sizeof(TempObject), guessArrayInitialSize(file.length, 64, 64));
+	arrayInit(&tempFaces, sizeof(TempFace), guessArrayInitialSize(file.length, 1<<17, 1<<23));
 	arrayInit(&faceIndices, sizeof(IndexTriplet), 8);
 	arrayInit(&tempFaceIndices, sizeof(IndexTriplet), 8);
 	int32_t currentMaterialIndex = -1;
 	uint32_t flags = 0;
 	Lexer lexer;
-	initLexer(&lexer, buffer);
+	initLexer(&lexer);
 	Token token;
 	for (;;) {
+		char *line = fileReadLine(&file);
+		if (!line)
+			break;
+		lexerSetLine(&lexer, line);
 		tokenize(&lexer, &token, false);
-		if (token.text[0] == 0) {
-			if (isEof(&lexer))
-				break;
-		} else if (OBJZ_STRICMP(token.text, "f") == 0) {
+		if (OBJZ_STRICMP(token.text, "f") == 0) {
 			// Get current object.
 			if (tempObjects.length == 0) {
 				// No objects specifed, but there's a face, so create one.
@@ -840,7 +858,6 @@ objzModel *objz_load(const char *_filename) {
 			arrayAppend(&texcoords, texcoord);
 			flags |= OBJZ_FLAG_TEXCOORDS;
 		}
-		skipLine(&lexer);
 	}
 	// Do some post-processing of parsed data:
 	//   * find unique vertices from separately index vertex attributes (pos, texcoord, normal).
@@ -904,7 +921,7 @@ objzModel *objz_load(const char *_filename) {
 		arrayAppend(&objects, &object);
 	}
 	// Build output data structure.
-	model = objz_malloc(sizeof(objzModel));
+	objzModel *model = objz_malloc(sizeof(objzModel));
 	model->flags = flags;
 	if (s_indexFormat == OBJZ_INDEX_FORMAT_U32 || (flags & OBJZ_FLAG_INDEX32))
 		model->indices = indices.data;
@@ -951,16 +968,15 @@ objzModel *objz_load(const char *_filename) {
 	objz_free(tempFaceIndices.data);
 	objz_free(vertexHashMap.indices.data);
 	vertexHashMapDestroy(&vertexHashMap);
-	objz_free(buffer);
 	return model;
 error:
+	fileClose(&file);
 	objz_free(materials.data);
 	objz_free(positions.data);
 	objz_free(texcoords.data);
 	objz_free(normals.data);
 	objz_free(faceIndices.data);
 	objz_free(tempFaceIndices.data);
-	objz_free(buffer);
 	return NULL;
 }
 
