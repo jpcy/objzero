@@ -502,9 +502,8 @@ typedef struct {
 
 typedef struct {
 	int32_t materialIndex;
-	vec3 normal;
 	IndexTriplet indices[3];
-} TempFace;
+} Face;
 
 static bool parseVertexAttribIndices(Token *_token, int32_t *_out) {
 	int32_t *v = &_out[0];
@@ -559,28 +558,6 @@ static uint32_t fixVertexAttribIndex(int32_t _index, uint32_t _n) {
 		return (uint32_t)(_index + _n);
 	// Convert from 1-indexed to 0-indexed.
 	return (uint32_t)(_index - 1);
-}
-
-static void calculateFaceNormal(TempFace *_face, const Array *_positions) {
-	if (s_vertexDecl.normalOffset == SIZE_MAX)
-		return; // User doesn't want normals.
-	for (int i = 0; i < 3; i++) {
-		if (_face->indices[i].vn == UINT32_MAX)
-			break;
-		if (i == 2)
-			return; // All vertices already have normals.
-	}
-	vec3 edge0, edge1;
-	const vec3 *positions = (const vec3 *)_positions->data;
-	OBJZ_VEC3_SUB(edge0, positions[_face->indices[1].v], positions[_face->indices[0].v]);
-	OBJZ_VEC3_SUB(edge1, positions[_face->indices[2].v], positions[_face->indices[0].v]);
-	OBJZ_VEC3_CROSS(_face->normal, edge0, edge1);
-	float len;
-	OBJZ_VEC3_DOT(len, _face->normal, _face->normal);
-	if (len > 0) {
-		len = 1.0f / sqrtf(len);
-		OBJZ_VEC3_MUL(_face->normal, _face->normal, len);
-	}
 }
 
 // code from https://wrf.ecse.rpi.edu//Research/Short_Notes/pnpoly.html
@@ -687,11 +664,10 @@ static void triangulate(const Array *_indices, const Array *_positions, Array *_
 			continue;
 		}
 		// this triangle is an ear
-		TempFace face;
+		Face face;
 		for (int i = 0; i < 3; i++)
 			face.indices[i] = *ind[i];
 		face.materialIndex = _materialIndex;
-		calculateFaceNormal(&face, _positions);
 		arrayAppend(_faces, &face);
 		// remove v1 from the list
 		uint32_t removed_vert_index = (guess_vert + 1) % remainingIndices->length;
@@ -703,11 +679,10 @@ static void triangulate(const Array *_indices, const Array *_positions, Array *_
 		remainingIndices->length--;
 	}
 	if (remainingIndices->length == 3) {
-		TempFace face;
+		Face face;
 		for (int i = 0; i < 3; i++)
 			face.indices[i] = *(IndexTriplet *)OBJZ_ARRAY_ELEMENT(*remainingIndices, i);
 		face.materialIndex = _materialIndex;
-		calculateFaceNormal(&face, _positions);
 		arrayAppend(_faces, &face);
 	}
 }
@@ -735,16 +710,17 @@ objzModel *objz_load(const char *_filename) {
 		return NULL;
 	}
 	// Parse the obj file and any material files.
-	Array materials, positions, texcoords, normals, tempObjects, tempFaces;
+	Array materials, positions, texcoords, normals, tempObjects, faces;
 	Array faceIndices, tempFaceIndices; // Re-used per face.
 	arrayInit(&materials, sizeof(objzMaterial), 16);
 	arrayInit(&positions, sizeof(float) * 3, guessArrayInitialSize(file.length, UINT16_MAX, 1<<21));
 	arrayInit(&texcoords, sizeof(float) * 2, guessArrayInitialSize(file.length, UINT16_MAX, UINT16_MAX));
 	arrayInit(&normals, sizeof(float) * 3, guessArrayInitialSize(file.length, 1<<14, 1<<14));
 	arrayInit(&tempObjects, sizeof(TempObject), guessArrayInitialSize(file.length, 64, 64));
-	arrayInit(&tempFaces, sizeof(TempFace), guessArrayInitialSize(file.length, 1<<17, 1<<23));
+	arrayInit(&faces, sizeof(Face), guessArrayInitialSize(file.length, 1<<17, 1<<23));
 	arrayInit(&faceIndices, sizeof(IndexTriplet), 8);
 	arrayInit(&tempFaceIndices, sizeof(IndexTriplet), 8);
+	bool generateNormals = false;
 	int32_t currentMaterialIndex = -1;
 	uint32_t flags = 0;
 	Lexer lexer;
@@ -788,6 +764,8 @@ objzModel *objz_load(const char *_filename) {
 				triplet.vt = fixVertexAttribIndex(rawTriplet[1], texcoords.length);
 				triplet.vn = fixVertexAttribIndex(rawTriplet[2], normals.length);
 				arrayAppend(&faceIndices, &triplet);
+				if (triplet.vn == UINT32_MAX && s_vertexDecl.normalOffset != SIZE_MAX)
+					generateNormals = true;
 			}
 			if (faceIndices.length < 3) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Face needs at least 3 vertices", token.line, token.column);
@@ -795,17 +773,16 @@ objzModel *objz_load(const char *_filename) {
 			}
 			// Triangulate.
 			if (faceIndices.length == 3) {
-				TempFace face;
+				Face face;
 				face.materialIndex = currentMaterialIndex;
 				for (int i = 0; i < 3; i++)
 					face.indices[i] = *(IndexTriplet *)OBJZ_ARRAY_ELEMENT(faceIndices, i);
-				calculateFaceNormal(&face, &positions);
-				arrayAppend(&tempFaces, &face);
+				arrayAppend(&faces, &face);
 				object->numFaces++;
 			} else {
-				const uint32_t prevTempFacesLength = tempFaces.length;
-				triangulate(&faceIndices, &positions, &tempFaceIndices, &tempFaces, currentMaterialIndex);
-				object->numFaces += tempFaces.length - prevTempFacesLength;
+				const uint32_t prevFacesLength = faces.length;
+				triangulate(&faceIndices, &positions, &tempFaceIndices, &faces, currentMaterialIndex);
+				object->numFaces += faces.length - prevFacesLength;
 			}
 		} else if (OBJZ_STRICMP(token.text, "mtllib") == 0) {
 			tokenize(&lexer, &token, true);
@@ -823,7 +800,7 @@ objzModel *objz_load(const char *_filename) {
 			}
 			TempObject o;
 			OBJZ_STRNCPY(o.name, sizeof(o.name), token.text);
-			o.firstFace = tempFaces.length;
+			o.firstFace = faces.length;
 			o.numFaces = 0;
 			arrayAppend(&tempObjects, &o);
 		} else if (OBJZ_STRICMP(token.text, "usemtl") == 0) {
@@ -860,12 +837,36 @@ objzModel *objz_load(const char *_filename) {
 		}
 	}
 	// Do some post-processing of parsed data:
+	//   * generate normals
 	//   * find unique vertices from separately index vertex attributes (pos, texcoord, normal).
 	//   * build meshes by batching object faces by material
+	Array faceNormals;
+	arrayInit(&faceNormals, sizeof(vec3), faces.length); // Exact capacity
+	if (generateNormals) {
+		for (uint32_t i = 0; i < tempObjects.length; i++) {
+			const TempObject *tempObject = OBJZ_ARRAY_ELEMENT(tempObjects, i);
+			for (uint32_t j = 0; j < tempObject->numFaces; j++) {
+				const Face *face = OBJZ_ARRAY_ELEMENT(faces, tempObject->firstFace + j);
+				vec3 edge0, edge1;
+				vec3 normal;
+				const vec3 *p = (const vec3 *)positions.data;
+				OBJZ_VEC3_SUB(edge0, p[face->indices[1].v], p[face->indices[0].v]);
+				OBJZ_VEC3_SUB(edge1, p[face->indices[2].v], p[face->indices[0].v]);
+				OBJZ_VEC3_CROSS(normal, edge0, edge1);
+				float len;
+				OBJZ_VEC3_DOT(len, normal, normal);
+				if (len > 0) {
+					len = 1.0f / sqrtf(len);
+					OBJZ_VEC3_MUL(normal, normal, len);
+				}
+				arrayAppend(&faceNormals, &normal);
+			}
+		}
+	}
 	Array meshes, objects, indices;
 	arrayInit(&meshes, sizeof(objzMesh), tempObjects.length * 4); // Guess capacity: 4 meshes per object
 	arrayInit(&objects, sizeof(objzObject), tempObjects.length); // Exact capacity
-	arrayInit(&indices, sizeof(uint32_t), tempFaces.length * 3); // Exact capacity
+	arrayInit(&indices, sizeof(uint32_t), faces.length * 3); // Exact capacity
 	VertexHashMap vertexHashMap;
 	vertexHashMapInit(&vertexHashMap, &positions, &texcoords, &normals);
 	for (uint32_t i = 0; i < tempObjects.length; i++) {
@@ -881,14 +882,14 @@ objzModel *objz_load(const char *_filename) {
 			mesh.numIndices = 0;
 			mesh.materialIndex = material;
 			for (uint32_t j = 0; j < tempObject->numFaces; j++) {
-				const TempFace *face = OBJZ_ARRAY_ELEMENT(tempFaces, tempObject->firstFace + j);
+				const Face *face = OBJZ_ARRAY_ELEMENT(faces, tempObject->firstFace + j);
 				if (face->materialIndex != material)
 					continue;
 				uint32_t faceNormalIndex = UINT32_MAX;
-				if (s_vertexDecl.normalOffset != SIZE_MAX) {
+				if (generateNormals) {
 					for (int k = 0; k < 3; k++) {
 						if (face->indices[k].vn == UINT32_MAX) {
-							arrayAppend(&normals, &face->normal);
+							arrayAppend(&normals, OBJZ_ARRAY_ELEMENT(faceNormals, j));
 							faceNormalIndex = normals.length - 1;
 							break;
 						}
