@@ -107,28 +107,29 @@ typedef struct {
 	float x, y, z;
 } vec3;
 
-#define OBJZ_VEC3_ABS(_out, _v) \
-	(_out).x = fabsf((_v).x);   \
-	(_out).y = fabsf((_v).y);   \
-	(_out).z = fabsf((_v).z);
+#define OBJZ_VEC3_ABS(_out, _v) (_out).x = fabsf((_v).x); (_out).y = fabsf((_v).y); (_out).z = fabsf((_v).z);
+#define OBJZ_VEC3_ADD(_out, _a, _b) (_out).x = (_a).x + (_b).x; (_out).y = (_a).y + (_b).y; (_out).z = (_a).z + (_b).z;
 
 #define OBJZ_VEC3_CROSS(_out, _a, _b)             \
 	(_out).x = (_a).y * (_b).z - (_a).z * (_b).y; \
 	(_out).y = (_a).z * (_b).x - (_a).x * (_b).z; \
 	(_out).z = (_a).x * (_b).y - (_a).y * (_b).x;
 
-#define OBJZ_VEC3_DOT(_out, _a, _b) \
-	(_out) = (_a).x * (_b).x + (_a).y * (_b).y + (_a).z * (_b).z;
+#define OBJZ_VEC3_COPY(_out, _in) (_out).x = (_in).x; (_out).y = (_in).y; (_out).z = (_in).z;
+#define OBJZ_VEC3_DOT(_out, _a, _b) (_out) = (_a).x * (_b).x + (_a).y * (_b).y + (_a).z * (_b).z;
+#define OBJZ_VEC3_MUL(_out, _v, _s) (_out).x = (_v).x * _s; (_out).y = (_v).y * _s; (_out).z = (_v).z * _s;
+#define OBJZ_VEC3_SET(_out, _x, _y, _z) (_out).x = (_x); (_out).y = (_y); (_out).z = (_z);
+#define OBJZ_VEC3_SUB(_out, _a, _b) (_out).x = (_a).x - (_b).x; (_out).y = (_a).y - (_b).y; (_out).z = (_a).z - (_b).z;
 
-#define OBJZ_VEC3_MUL(_out, _v, _s) \
-	(_out).x = (_v).x * _s;         \
-	(_out).y = (_v).y * _s;         \
-	(_out).z = (_v).z * _s;
-
-#define OBJZ_VEC3_SUB(_out, _a, _b) \
-	(_out).x = (_a).x - (_b).x;     \
-	(_out).y = (_a).y - (_b).y;     \
-	(_out).z = (_a).z - (_b).z;
+static void vec3Normalize(vec3 *_out, const vec3 *_in) {
+	float len;
+	OBJZ_VEC3_DOT(len, *_in, *_in);
+	if (len > 0) {
+		len = 1.0f / sqrtf(len);
+		OBJZ_VEC3_MUL(*_out, *_in, len);
+	} else
+		OBJZ_VEC3_COPY(*_out, *_in);
+}
 
 typedef struct {
 	uint8_t *data;
@@ -501,7 +502,8 @@ typedef struct {
 } IndexTriplet;
 
 typedef struct {
-	int32_t materialIndex;
+	int16_t materialIndex;
+	uint16_t smoothingGroup; // 0 is off
 	IndexTriplet indices[3];
 } Face;
 
@@ -572,7 +574,7 @@ static int pnpoly(int nvert, float *vertx, float *verty, float testx, float test
 
 // Ear clipping triangulation from tinyobjloader
 // https://github.com/syoyo/tinyobjloader
-static void triangulate(const Array *_indices, const Array *_positions, Array *_tempIndices, Array *_faces, int32_t _materialIndex) {
+static void triangulate(const Array *_indices, const Array *_positions, Array *_tempIndices, Array *_faces, int32_t _materialIndex, uint16_t _smoothingGroup) {
 	// find the two axes to work in
 	uint32_t axes[2] = { 1, 2 };
 	for (uint32_t i = 0; i < _indices->length; i++) {
@@ -667,7 +669,8 @@ static void triangulate(const Array *_indices, const Array *_positions, Array *_
 		Face face;
 		for (int i = 0; i < 3; i++)
 			face.indices[i] = *ind[i];
-		face.materialIndex = _materialIndex;
+		face.materialIndex = (int16_t)_materialIndex;
+		face.smoothingGroup = _smoothingGroup;
 		arrayAppend(_faces, &face);
 		// remove v1 from the list
 		uint32_t removed_vert_index = (guess_vert + 1) % remainingIndices->length;
@@ -682,9 +685,32 @@ static void triangulate(const Array *_indices, const Array *_positions, Array *_
 		Face face;
 		for (int i = 0; i < 3; i++)
 			face.indices[i] = *(IndexTriplet *)OBJZ_ARRAY_ELEMENT(*remainingIndices, i);
-		face.materialIndex = _materialIndex;
+		face.materialIndex = (int16_t)_materialIndex;
+		face.smoothingGroup = _smoothingGroup;
 		arrayAppend(_faces, &face);
 	}
+}
+
+static vec3 calculateSmoothNormal(uint32_t _pos, Array *_faces, Array *_faceNormals, uint16_t _smoothingGroup) {
+	vec3 normal;
+	OBJZ_VEC3_SET(normal, 0, 0, 0);
+	int n = 0;
+	for (uint32_t i = 0; i < _faces->length; i++) {
+		const Face *face = OBJZ_ARRAY_ELEMENT(*_faces, i);
+		if (face->smoothingGroup != _smoothingGroup)
+			continue;
+		for (int j = 0; j < 3; j++) {
+			if (face->indices[j].v == _pos) {
+				OBJZ_VEC3_ADD(normal, normal, *(vec3 *)OBJZ_ARRAY_ELEMENT(*_faceNormals, i));
+				n++;
+				break;
+			}
+		}
+	}
+	const float s = 1.0f / n;
+	OBJZ_VEC3_MUL(normal, normal, s);
+	vec3Normalize(&normal, &normal);
+	return normal;
 }
 
 void objz_setRealloc(objzReallocFunc _realloc) {
@@ -722,6 +748,7 @@ objzModel *objz_load(const char *_filename) {
 	arrayInit(&tempFaceIndices, sizeof(IndexTriplet), 8);
 	bool generateNormals = false;
 	int32_t currentMaterialIndex = -1;
+	uint16_t currentSmoothingGroup = 0;
 	uint32_t flags = 0;
 	Lexer lexer;
 	initLexer(&lexer);
@@ -774,14 +801,15 @@ objzModel *objz_load(const char *_filename) {
 			// Triangulate.
 			if (faceIndices.length == 3) {
 				Face face;
-				face.materialIndex = currentMaterialIndex;
+				face.materialIndex = (int16_t)currentMaterialIndex;
+				face.smoothingGroup = currentSmoothingGroup;
 				for (int i = 0; i < 3; i++)
 					face.indices[i] = *(IndexTriplet *)OBJZ_ARRAY_ELEMENT(faceIndices, i);
 				arrayAppend(&faces, &face);
 				object->numFaces++;
 			} else {
 				const uint32_t prevFacesLength = faces.length;
-				triangulate(&faceIndices, &positions, &tempFaceIndices, &faces, currentMaterialIndex);
+				triangulate(&faceIndices, &positions, &tempFaceIndices, &faces, currentMaterialIndex, currentSmoothingGroup);
 				object->numFaces += faces.length - prevFacesLength;
 			}
 		} else if (OBJZ_STRICMP(token.text, "mtllib") == 0) {
@@ -803,6 +831,16 @@ objzModel *objz_load(const char *_filename) {
 			o.firstFace = faces.length;
 			o.numFaces = 0;
 			arrayAppend(&tempObjects, &o);
+		} else if (OBJZ_STRICMP(token.text, "s") == 0) {
+			tokenize(&lexer, &token, false);
+			if (token.text[0] == 0) {
+				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected value after 's'", token.line, token.column);
+				goto error;
+			}
+			if (OBJZ_STRICMP(token.text, "off") == 0)
+				currentSmoothingGroup = 0;
+			else
+				currentSmoothingGroup = (uint16_t)atoi(token.text);
 		} else if (OBJZ_STRICMP(token.text, "usemtl") == 0) {
 			tokenize(&lexer, &token, false);
 			if (token.text[0] == 0) {
@@ -853,12 +891,7 @@ objzModel *objz_load(const char *_filename) {
 				OBJZ_VEC3_SUB(edge0, p[face->indices[1].v], p[face->indices[0].v]);
 				OBJZ_VEC3_SUB(edge1, p[face->indices[2].v], p[face->indices[0].v]);
 				OBJZ_VEC3_CROSS(normal, edge0, edge1);
-				float len;
-				OBJZ_VEC3_DOT(len, normal, normal);
-				if (len > 0) {
-					len = 1.0f / sqrtf(len);
-					OBJZ_VEC3_MUL(normal, normal, len);
-				}
+				vec3Normalize(&normal, &normal);
 				arrayAppend(&faceNormals, &normal);
 			}
 		}
@@ -883,7 +916,7 @@ objzModel *objz_load(const char *_filename) {
 			mesh.materialIndex = material;
 			for (uint32_t j = 0; j < tempObject->numFaces; j++) {
 				const Face *face = OBJZ_ARRAY_ELEMENT(faces, tempObject->firstFace + j);
-				if (face->materialIndex != material)
+				if (face->materialIndex != (int16_t)material)
 					continue;
 				uint32_t faceNormalIndex = UINT32_MAX;
 				if (generateNormals) {
@@ -897,7 +930,16 @@ objzModel *objz_load(const char *_filename) {
 				}
 				for (int k = 0; k < 3; k++) {
 					const IndexTriplet *triplet = &face->indices[k];
-					const uint32_t index = vertexHashMapInsert(&vertexHashMap, i, triplet->v, triplet->vt, faceNormalIndex == UINT32_MAX ? triplet->vn : faceNormalIndex);
+					uint32_t vn = triplet->vn;
+					if (faceNormalIndex != UINT32_MAX) {
+						if (face->smoothingGroup > 0) {
+							vec3 normal = calculateSmoothNormal(triplet->v, &faces, &faceNormals, face->smoothingGroup);
+							arrayAppend(&normals, &normal);
+							vn = normals.length - 1;
+						} else
+							vn = faceNormalIndex;
+					}
+					const uint32_t index = vertexHashMapInsert(&vertexHashMap, i, triplet->v, triplet->vt, vn);
 					if (index > UINT16_MAX)
 						flags |= OBJZ_FLAG_INDEX32;
 					arrayAppend(&indices, &index);
