@@ -64,43 +64,27 @@ static VertexFormat s_vertexDecl = {
 	.stride = sizeof(float) * (3 + 2 + 3),
 	.positionOffset = 0,
 	.texcoordOffset = sizeof(float) * 3,
-	.normalOffset = sizeof(float) * 3 * 2
+	.normalOffset = sizeof(float) * (3 + 2)
 };
 
-static void *objz_malloc(size_t _size) {
-	void *result;
-	if (s_realloc)
-		result = s_realloc(NULL, _size);
-	else
-		result = malloc(_size);
-	if (!result) {
-		fprintf(stderr, "Memory allocation failed\n");
-		abort();
-	}
-	return result;
-}
-
-static void *objz_realloc(void *_ptr, size_t _size) {
+static void *objz_realloc(void *_ptr, size_t _size, char *_file, int _line) {
+	if (!_ptr && !_size)
+		return NULL;
 	void *result;
 	if (s_realloc)
 		result = s_realloc(_ptr, _size);
 	else
 		result = realloc(_ptr, _size);
-	if (!result) {
-		fprintf(stderr, "Memory allocation failed\n");
+	if (_size > 0 && !result) {
+		fprintf(stderr, "Memory allocation failed %s %d\n", _file, _line);
 		abort();
 	}
 	return result;
 }
 
-static void objz_free(void *_ptr) {
-	if (!_ptr)
-		return;
-	if (s_realloc)
-		s_realloc(_ptr, 0);
-	else
-		free(_ptr);
-}
+#define OBJZ_MALLOC(_size) objz_realloc(NULL, (_size), __FILE__, __LINE__)
+#define OBJZ_REALLOC(_ptr, _size) objz_realloc((_ptr), (_size), __FILE__, __LINE__)
+#define OBJZ_FREE(_ptr) objz_realloc((_ptr), 0, __FILE__, __LINE__)
 
 typedef struct {
 	float x, y, z;
@@ -151,11 +135,11 @@ static void arrayInit(Array *_array, size_t _elementSize, uint32_t _initialCapac
 
 static void arrayAppend(Array *_array, const void *_element) {
 	if (!_array->data) {
-		_array->data = objz_malloc(_array->elementSize * _array->initialCapacity);
+		_array->data = OBJZ_MALLOC(_array->elementSize * _array->initialCapacity);
 		_array->capacity = _array->initialCapacity;
 	} else if (_array->length == _array->capacity) {
 		_array->capacity *= 2;
-		_array->data = objz_realloc(_array->data, _array->capacity * _array->elementSize);
+		_array->data = OBJZ_REALLOC(_array->data, _array->capacity * _array->elementSize);
 	}
 	memcpy(&_array->data[_array->length * _array->elementSize], _element, _array->elementSize);
 	_array->length++;
@@ -262,11 +246,11 @@ bool fileOpen(File *_file, const char *_filename) {
 		return false;
 	}
 	_file->pos = 0;
-	_file->buffer = objz_malloc(_file->length + 1);
+	_file->buffer = OBJZ_MALLOC(_file->length + 1);
 	const size_t bytesRead = fread(_file->buffer, 1, _file->length, handle);
 	fclose(handle);
 	if (bytesRead < _file->length) {
-		objz_free(_file->buffer);
+		OBJZ_FREE(_file->buffer);
 		return false;
 	}
 	_file->buffer[_file->length] = 0;
@@ -274,7 +258,7 @@ bool fileOpen(File *_file, const char *_filename) {
 }
 
 void fileClose(File *_file) {
-	objz_free(_file->buffer);
+	OBJZ_FREE(_file->buffer);
 }
 
 char *fileReadLine(File *_file) {
@@ -423,15 +407,15 @@ typedef struct {
 
 static void vertexHashMapInit(VertexHashMap *_map, uint32_t _initialCapacity) {
 	_map->numSlots = (uint32_t)(_initialCapacity * 1.3f);
-	_map->slots = objz_malloc(sizeof(uint32_t) * _map->numSlots);
+	_map->slots = OBJZ_MALLOC(sizeof(uint32_t) * _map->numSlots);
 	for (uint32_t i = 0; i < _map->numSlots; i++)
 		_map->slots[i] = UINT32_MAX;
 	arrayInit(&_map->vertices, sizeof(HashedVertex), _initialCapacity);
 }
 
 static void vertexHashMapDestroy(VertexHashMap *_map) {
-	objz_free(_map->slots);
-	objz_free(_map->vertices.data);
+	OBJZ_FREE(_map->slots);
+	OBJZ_FREE(_map->vertices.data);
 }
 
 static uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _object, uint32_t _pos, uint32_t _texcoord, uint32_t _normal) {
@@ -481,22 +465,22 @@ static void normalHashMapClear(NormalHashMap *_map) {
 
 static void normalHashMapInit(NormalHashMap *_map, uint32_t _initialCapacity, Array *_normals) {
 	_map->numSlots = (uint32_t)(_initialCapacity * 1.3f);
-	_map->slots = objz_malloc(sizeof(uint32_t) * _map->numSlots);
+	_map->slots = OBJZ_MALLOC(sizeof(uint32_t) * _map->numSlots);
 	_map->normals = _normals;
 	arrayInit(&_map->hashedNormals, sizeof(HashedNormal), _initialCapacity);
 	normalHashMapClear(_map);
 }
 
 static void normalHashMapDestroy(NormalHashMap *_map) {
-	objz_free(_map->slots);
-	objz_free(_map->hashedNormals.data);
+	OBJZ_FREE(_map->slots);
+	OBJZ_FREE(_map->hashedNormals.data);
 }
 
 static uint32_t normalHashMapInsert(NormalHashMap *_map, const vec3 *_normal) {
 	uint32_t hashData[3] = { 0 };
 	hashData[0] = (uint32_t)(_normal->x * 0.5f + 0.5f * 255);
 	hashData[1] = (uint32_t)(_normal->y * 0.5f + 0.5f * 255);
-	hashData[3] = (uint32_t)(_normal->z * 0.5f + 0.5f * 255);
+	hashData[2] = (uint32_t)(_normal->z * 0.5f + 0.5f * 255);
 	const uint32_t hash = sdbmHash((const uint8_t *)hashData, sizeof(hashData)) % _map->numSlots;
 	uint32_t i = _map->slots[hash];
 	while (i != UINT32_MAX) {
@@ -916,6 +900,9 @@ objzModel *objz_load(const char *_filename) {
 			flags |= OBJZ_FLAG_TEXCOORDS;
 		}
 	}
+	OBJZ_FREE(faceIndices.data);
+	OBJZ_FREE(tempFaceIndices.data);
+	fileClose(&file);
 	// Do some post-processing of parsed data:
 	//   * generate normals
 	//   * find unique vertices from separately index vertex attributes (pos, texcoord, normal).
@@ -1016,19 +1003,22 @@ objzModel *objz_load(const char *_filename) {
 	}
 	if (generateNormals)
 		normalHashMapDestroy(&normalHashMap);
+	OBJZ_FREE(tempObjects.data);
+	OBJZ_FREE(faces.data);
+	OBJZ_FREE(faceNormals.data);
 	// Build output data structure.
-	objzModel *model = objz_malloc(sizeof(objzModel));
+	objzModel *model = OBJZ_MALLOC(sizeof(objzModel));
 	model->flags = flags;
 	if (s_indexFormat == OBJZ_INDEX_FORMAT_U32 || (flags & OBJZ_FLAG_INDEX32))
 		model->indices = indices.data;
 	else {
 		flags &= ~OBJZ_FLAG_INDEX32;
-		model->indices = objz_malloc(sizeof(uint16_t) * indices.length);
+		model->indices = OBJZ_MALLOC(sizeof(uint16_t) * indices.length);
 		for (uint32_t i = 0; i < indices.length; i++) {
 			uint32_t *index = (uint32_t *)OBJZ_ARRAY_ELEMENT(indices, i);
 			((uint16_t *)model->indices)[i] = (uint16_t)*index;
 		}
-		objz_free(indices.data);
+		OBJZ_FREE(indices.data);
 	}
 	model->numIndices = indices.length;
 	model->materials = (objzMaterial *)materials.data;
@@ -1037,7 +1027,7 @@ objzModel *objz_load(const char *_filename) {
 	model->numMeshes = meshes.length;
 	model->objects = (objzObject *)objects.data;
 	model->numObjects = objects.length;
-	model->vertices = objz_malloc(s_vertexDecl.stride * vertexHashMap.vertices.length);
+	model->vertices = OBJZ_MALLOC(s_vertexDecl.stride * vertexHashMap.vertices.length);
 	for (uint32_t i = 0; i < vertexHashMap.vertices.length; i++) {
 		uint8_t *vOut = &((uint8_t *)model->vertices)[i * s_vertexDecl.stride];
 		const HashedVertex *vIn = OBJZ_ARRAY_ELEMENT(vertexHashMap.vertices, i);
@@ -1057,33 +1047,33 @@ objzModel *objz_load(const char *_filename) {
 		}
 	}
 	model->numVertices = vertexHashMap.vertices.length;
-	objz_free(positions.data);
-	objz_free(texcoords.data);
-	objz_free(normals.data);
-	objz_free(faceIndices.data);
-	objz_free(tempFaceIndices.data);
+	OBJZ_FREE(positions.data);
+	OBJZ_FREE(texcoords.data);
+	OBJZ_FREE(normals.data);
 	vertexHashMapDestroy(&vertexHashMap);
 	return model;
 error:
 	fileClose(&file);
-	objz_free(materials.data);
-	objz_free(positions.data);
-	objz_free(texcoords.data);
-	objz_free(normals.data);
-	objz_free(faceIndices.data);
-	objz_free(tempFaceIndices.data);
+	OBJZ_FREE(materials.data);
+	OBJZ_FREE(positions.data);
+	OBJZ_FREE(texcoords.data);
+	OBJZ_FREE(normals.data);
+	OBJZ_FREE(tempObjects.data);
+	OBJZ_FREE(faces.data);
+	OBJZ_FREE(faceIndices.data);
+	OBJZ_FREE(tempFaceIndices.data);
 	return NULL;
 }
 
 void objz_destroy(objzModel *_model) {
 	if (!_model)
 		return;
-	objz_free(_model->indices);
-	objz_free(_model->materials);
-	objz_free(_model->meshes);
-	objz_free(_model->objects);
-	objz_free(_model->vertices);
-	objz_free(_model);
+	OBJZ_FREE(_model->indices);
+	OBJZ_FREE(_model->materials);
+	OBJZ_FREE(_model->meshes);
+	OBJZ_FREE(_model->objects);
+	OBJZ_FREE(_model->vertices);
+	OBJZ_FREE(_model);
 }
 
 const char *objz_getError() {
