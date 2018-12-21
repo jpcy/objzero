@@ -334,7 +334,7 @@ static bool loadMaterialFile(const char *_objFilename, const char *_materialName
 			if (&_objFilename[i] == lastSlash)
 				break;
 		}
-		OBJZ_STRNCAT(filename, sizeof(filename), _materialName, sizeof(filename) - strlen(filename) - 1);
+		OBJZ_STRNCAT(filename, sizeof(filename), _materialName, strlen(_materialName));
 	} else
 		OBJZ_STRNCPY(filename, sizeof(filename), _materialName);
 	bool result = false;
@@ -716,6 +716,8 @@ objzModel *objz_load(const char *_filename) {
 	arrayInit(&faceIndices, sizeof(IndexTriplet), 8);
 	arrayInit(&tempFaceIndices, sizeof(IndexTriplet), 8);
 	bool generateNormals = false;
+	char currentGroupName[OBJZ_NAME_MAX] = { 0 };
+	char currentObjectName[OBJZ_NAME_MAX] = { 0 };
 	int32_t currentMaterialIndex = -1;
 	uint16_t currentSmoothingGroup = 0;
 	uint32_t flags = 0;
@@ -781,6 +783,28 @@ objzModel *objz_load(const char *_filename) {
 				triangulate(&faceIndices, &positions, &tempFaceIndices, &faces, currentMaterialIndex, currentSmoothingGroup);
 				object->numFaces += faces.length - prevFacesLength;
 			}
+		} else if (OBJZ_STRICMP(token.text, "g") == 0 || OBJZ_STRICMP(token.text, "o") == 0) {
+			tokenize(&lexer, &token, true);
+			if (token.text[0] == 0) {
+				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'g'/'o'", token.line, token.column);
+				goto error;
+			}
+			if (OBJZ_STRICMP(token.text, "g") == 0)
+				OBJZ_STRNCPY(currentGroupName, sizeof(currentGroupName), token.text);
+			else
+				OBJZ_STRNCPY(currentObjectName, sizeof(currentObjectName), token.text);
+			TempObject o;
+			o.name[0] = 0;
+			if (currentGroupName[0] != 0)
+				OBJZ_STRNCPY(o.name, sizeof(o.name), currentGroupName);
+			if (currentObjectName[0] != 0) {
+				if (strlen(o.name) > 0)
+					OBJZ_STRNCAT(o.name, sizeof(o.name), " ", 1);
+				OBJZ_STRNCAT(o.name, sizeof(o.name), currentObjectName, strlen(currentObjectName));
+			}
+			o.firstFace = faces.length;
+			o.numFaces = 0;
+			arrayAppend(&tempObjects, &o);
 		} else if (OBJZ_STRICMP(token.text, "mtllib") == 0) {
 			tokenize(&lexer, &token, true);
 			if (token.text[0] == 0) {
@@ -789,17 +813,6 @@ objzModel *objz_load(const char *_filename) {
 			}
 			if (!loadMaterialFile(_filename, token.text, &materials))
 				goto error;
-		} else if (OBJZ_STRICMP(token.text, "o") == 0) {
-			tokenize(&lexer, &token, false);
-			if (token.text[0] == 0) {
-				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'o'", token.line, token.column);
-				goto error;
-			}
-			TempObject o;
-			OBJZ_STRNCPY(o.name, sizeof(o.name), token.text);
-			o.firstFace = faces.length;
-			o.numFaces = 0;
-			arrayAppend(&tempObjects, &o);
 		} else if (OBJZ_STRICMP(token.text, "s") == 0) {
 			tokenize(&lexer, &token, false);
 			if (token.text[0] == 0) {
@@ -888,10 +901,10 @@ objzModel *objz_load(const char *_filename) {
 				if (face->materialIndex != (int16_t)material)
 					continue;
 				uint32_t faceNormalIndex = UINT32_MAX;
-				if (generateNormals) {
+				if (generateNormals && face->smoothingGroup == 0) {
 					for (int k = 0; k < 3; k++) {
 						if (face->indices[k].vn == UINT32_MAX) {
-							arrayAppend(&normals, OBJZ_ARRAY_ELEMENT(faceNormals, j));
+							arrayAppend(&normals, OBJZ_ARRAY_ELEMENT(faceNormals, tempObject->firstFace + j));
 							faceNormalIndex = normals.length - 1;
 							break;
 						}
@@ -900,12 +913,12 @@ objzModel *objz_load(const char *_filename) {
 				for (int k = 0; k < 3; k++) {
 					const IndexTriplet *triplet = &face->indices[k];
 					uint32_t vn = triplet->vn;
-					if (faceNormalIndex != UINT32_MAX) {
+					if (generateNormals) {
 						if (face->smoothingGroup > 0) {
 							vec3 normal = calculateSmoothNormal(triplet->v, &faces, &faceNormals, face->smoothingGroup);
 							arrayAppend(&normals, &normal);
 							vn = normals.length - 1;
-						} else
+						} else if (faceNormalIndex != UINT32_MAX)
 							vn = faceNormalIndex;
 					}
 					const uint32_t index = vertexHashMapInsert(&vertexHashMap, i, triplet->v, triplet->vt, vn);
