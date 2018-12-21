@@ -47,6 +47,7 @@ THE SOFTWARE.
 
 #define OBJZ_MAX_ERROR_LENGTH 1024
 #define OBJZ_MAX_TOKEN_LENGTH 256
+#define OBJZ_LARGEST(_a, _b) ((_a) < (_b) ? (_b) : (_a))
 
 static char s_error[OBJZ_MAX_ERROR_LENGTH] = { 0 };
 static objzReallocFunc s_realloc = NULL;
@@ -118,6 +119,10 @@ typedef struct {
 #define OBJZ_VEC3_MUL(_out, _v, _s) (_out).x = (_v).x * _s; (_out).y = (_v).y * _s; (_out).z = (_v).z * _s;
 #define OBJZ_VEC3_SET(_out, _x, _y, _z) (_out).x = (_x); (_out).y = (_y); (_out).z = (_z);
 #define OBJZ_VEC3_SUB(_out, _a, _b) (_out).x = (_a).x - (_b).x; (_out).y = (_a).y - (_b).y; (_out).z = (_a).z - (_b).z;
+
+static bool vec3Equal(const vec3 *_a, const vec3 *_b, float epsilon) {
+	return fabsf(_a->x - _b->x) <= epsilon && fabsf(_a->y - _b->y) <= epsilon && fabsf(_a->z - _b->z) <= epsilon;
+}
 
 static void vec3Normalize(vec3 *_out, const vec3 *_in) {
 	float len;
@@ -394,12 +399,20 @@ cleanup:
 	return result;
 }
 
+static uint32_t sdbmHash(const uint8_t *_data, uint32_t _size)
+{
+	uint32_t hash = 0;
+	for (uint32_t i = 0; i < _size; i++)
+		hash = (uint32_t)_data[i] + (hash << 6) + (hash << 16) - hash;
+	return hash;
+}
+
 typedef struct {
 	uint32_t object;
 	uint32_t pos;
 	uint32_t texcoord;
 	uint32_t normal;
-	uint32_t hashNext; // For hash collisions: next Index with the same hash.
+	uint32_t hashNext; // For hash collisions: next HashedVertex with the same hash.
 } HashedVertex;
 
 typedef struct {
@@ -418,14 +431,7 @@ static void vertexHashMapInit(VertexHashMap *_map, uint32_t _initialCapacity) {
 
 static void vertexHashMapDestroy(VertexHashMap *_map) {
 	objz_free(_map->slots);
-}
-
-static uint32_t sdbmHash(const uint8_t *_data, uint32_t _size)
-{
-	uint32_t hash = 0;
-	for (uint32_t i = 0; i < _size; i++)
-		hash = (uint32_t)_data[i] + (hash << 6) + (hash << 16) - hash;
-	return hash;
+	objz_free(_map->vertices.data);
 }
 
 static uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _object, uint32_t _pos, uint32_t _texcoord, uint32_t _normal) {
@@ -453,6 +459,59 @@ static uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _object, uint3
 	_map->slots[hash] = _map->vertices.length;
 	arrayAppend(&_map->vertices, &v);
 	return _map->slots[hash];
+}
+
+typedef struct {
+	uint32_t normalIndex;
+	uint32_t hashNext; // For hash collisions: next HashedNormal with the same hash.
+} HashedNormal;
+
+typedef struct {
+	uint32_t *slots;
+	uint32_t numSlots;
+	Array hashedNormals;
+	Array *normals;
+} NormalHashMap;
+
+static void normalHashMapClear(NormalHashMap *_map) {
+	for (uint32_t i = 0; i < _map->numSlots; i++)
+		_map->slots[i] = UINT32_MAX;
+	_map->hashedNormals.length = 0;
+}
+
+static void normalHashMapInit(NormalHashMap *_map, uint32_t _initialCapacity, Array *_normals) {
+	_map->numSlots = (uint32_t)(_initialCapacity * 1.3f);
+	_map->slots = objz_malloc(sizeof(uint32_t) * _map->numSlots);
+	_map->normals = _normals;
+	arrayInit(&_map->hashedNormals, sizeof(HashedNormal), _initialCapacity);
+	normalHashMapClear(_map);
+}
+
+static void normalHashMapDestroy(NormalHashMap *_map) {
+	objz_free(_map->slots);
+	objz_free(_map->hashedNormals.data);
+}
+
+static uint32_t normalHashMapInsert(NormalHashMap *_map, const vec3 *_normal) {
+	uint32_t hashData[3] = { 0 };
+	hashData[0] = (uint32_t)(_normal->x * 0.5f + 0.5f * 255);
+	hashData[1] = (uint32_t)(_normal->y * 0.5f + 0.5f * 255);
+	hashData[3] = (uint32_t)(_normal->z * 0.5f + 0.5f * 255);
+	const uint32_t hash = sdbmHash((const uint8_t *)hashData, sizeof(hashData)) % _map->numSlots;
+	uint32_t i = _map->slots[hash];
+	while (i != UINT32_MAX) {
+		const HashedNormal *n = OBJZ_ARRAY_ELEMENT(_map->hashedNormals, i);
+		if (vec3Equal(OBJZ_ARRAY_ELEMENT(*_map->normals, n->normalIndex), _normal, FLT_EPSILON))
+			return n->normalIndex;
+		i = n->hashNext;
+	}
+	HashedNormal n;
+	n.normalIndex = _map->normals->length;
+	n.hashNext = _map->slots[hash];
+	_map->slots[hash] = _map->hashedNormals.length;
+	arrayAppend(&_map->hashedNormals, &n);
+	arrayAppend(_map->normals, _normal);
+	return n.normalIndex;
 }
 
 static uint32_t guessArrayInitialSize(size_t _fileLength, uint32_t _min, uint32_t _max) {
@@ -705,6 +764,7 @@ objzModel *objz_load(const char *_filename) {
 		return NULL;
 	}
 	// Parse the obj file and any material files.
+	// Faces are triangulated. Other than that, this is straight parsing.
 	Array materials, positions, texcoords, normals, tempObjects, faces;
 	Array faceIndices, tempFaceIndices; // Re-used per face.
 	arrayInit(&materials, sizeof(objzMaterial), 16);
@@ -884,10 +944,21 @@ objzModel *objz_load(const char *_filename) {
 	arrayInit(&indices, sizeof(uint32_t), faces.length * 3); // Exact capacity
 	VertexHashMap vertexHashMap;
 	vertexHashMapInit(&vertexHashMap, positions.length * 2); // Guess capacity
+	NormalHashMap normalHashMap; // Re-used for each object.
+	if (generateNormals) {
+		uint32_t maxObjectFaces = 0;
+		for (uint32_t i = 0; i < tempObjects.length; i++) {
+			const TempObject *tempObject = OBJZ_ARRAY_ELEMENT(tempObjects, i);
+			maxObjectFaces = OBJZ_LARGEST(maxObjectFaces, tempObject->numFaces);
+		}
+		normalHashMapInit(&normalHashMap, OBJZ_LARGEST(maxObjectFaces, 32), &normals); // Guess capacity.
+	}
 	for (uint32_t i = 0; i < tempObjects.length; i++) {
 		const TempObject *tempObject = OBJZ_ARRAY_ELEMENT(tempObjects, i);
 		objzObject object;
 		OBJZ_STRNCPY(object.name, sizeof(object.name), tempObject->name);
+		if (generateNormals)
+			normalHashMapClear(&normalHashMap);
 		// Create one mesh per material. No material (-1) gets a mesh too.
 		object.firstMesh = meshes.length;
 		object.numMeshes = 0;
@@ -904,8 +975,7 @@ objzModel *objz_load(const char *_filename) {
 				if (generateNormals && face->smoothingGroup == 0) {
 					for (int k = 0; k < 3; k++) {
 						if (face->indices[k].vn == UINT32_MAX) {
-							arrayAppend(&normals, OBJZ_ARRAY_ELEMENT(faceNormals, tempObject->firstFace + j));
-							faceNormalIndex = normals.length - 1;
+							faceNormalIndex = normalHashMapInsert(&normalHashMap, OBJZ_ARRAY_ELEMENT(faceNormals, tempObject->firstFace + j));
 							break;
 						}
 					}
@@ -916,8 +986,7 @@ objzModel *objz_load(const char *_filename) {
 					if (generateNormals) {
 						if (face->smoothingGroup > 0) {
 							vec3 normal = calculateSmoothNormal(triplet->v, &faces, &faceNormals, face->smoothingGroup);
-							arrayAppend(&normals, &normal);
-							vn = normals.length - 1;
+							vn = normalHashMapInsert(&normalHashMap, &normal);
 						} else if (faceNormalIndex != UINT32_MAX)
 							vn = faceNormalIndex;
 					}
@@ -945,6 +1014,8 @@ objzModel *objz_load(const char *_filename) {
 		object.numVertices = vertexHashMap.vertices.length - object.firstVertex;
 		arrayAppend(&objects, &object);
 	}
+	if (generateNormals)
+		normalHashMapDestroy(&normalHashMap);
 	// Build output data structure.
 	objzModel *model = objz_malloc(sizeof(objzModel));
 	model->flags = flags;
@@ -991,7 +1062,6 @@ objzModel *objz_load(const char *_filename) {
 	objz_free(normals.data);
 	objz_free(faceIndices.data);
 	objz_free(tempFaceIndices.data);
-	objz_free(vertexHashMap.vertices.data);
 	vertexHashMapDestroy(&vertexHashMap);
 	return model;
 error:
