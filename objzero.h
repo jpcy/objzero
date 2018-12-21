@@ -21,11 +21,9 @@ void objz_setIndexFormat(uint32_t _format);
 /*
 Default vertex data structure looks like this:
 
-typedef struct {
 float pos[3];
 float texcoord[2];
 float normal[3];
-} Vertex;
 
 texcoordOffset - optional: set to SIZE_MAX to ignore
 normalOffset - optional: set to SIZE_MAX to ignore

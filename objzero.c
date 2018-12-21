@@ -57,15 +57,13 @@ typedef struct {
 	size_t positionOffset;
 	size_t texcoordOffset;
 	size_t normalOffset;
-	bool custom;
 } VertexFormat;
 
 static VertexFormat s_vertexDecl = {
-	.stride = sizeof(float) * 3 * 2 * 3,
+	.stride = sizeof(float) * (3 + 2 + 3),
 	.positionOffset = 0,
 	.texcoordOffset = sizeof(float) * 3,
-	.normalOffset = sizeof(float) * 3 * 2,
-	.custom = false
+	.normalOffset = sizeof(float) * 3 * 2
 };
 
 static void *objz_malloc(size_t _size) {
@@ -397,39 +395,25 @@ cleanup:
 }
 
 typedef struct {
-	float pos[3];
-	float texcoord[2];
-	float normal[3];
-} Vertex;
-
-typedef struct {
 	uint32_t object;
 	uint32_t pos;
 	uint32_t texcoord;
 	uint32_t normal;
 	uint32_t hashNext; // For hash collisions: next Index with the same hash.
-} Index;
+} HashedVertex;
 
 typedef struct {
 	uint32_t *slots;
 	uint32_t numSlots;
-	Array indices;
 	Array vertices;
-	const Array *positions;
-	const Array *texcoords;
-	const Array *normals;
 } VertexHashMap;
 
-static void vertexHashMapInit(VertexHashMap *_map, const Array *_positions, const Array *_texcoords, const Array *_normals) {
-	_map->numSlots = _positions->length * 2;
+static void vertexHashMapInit(VertexHashMap *_map, uint32_t _initialCapacity) {
+	_map->numSlots = (uint32_t)(_initialCapacity * 1.3f);
 	_map->slots = objz_malloc(sizeof(uint32_t) * _map->numSlots);
 	for (uint32_t i = 0; i < _map->numSlots; i++)
 		_map->slots[i] = UINT32_MAX;
-	arrayInit(&_map->indices, sizeof(Index), _positions->length);
-	arrayInit(&_map->vertices, sizeof(Vertex), _positions->length);
-	_map->positions = _positions;
-	_map->texcoords = _texcoords;
-	_map->normals = _normals;
+	arrayInit(&_map->vertices, sizeof(HashedVertex), _initialCapacity);
 }
 
 static void vertexHashMapDestroy(VertexHashMap *_map) {
@@ -455,33 +439,19 @@ static uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _object, uint3
 	const uint32_t hash = sdbmHash((const uint8_t *)hashData, sizeof(hashData)) % _map->numSlots;
 	uint32_t i = _map->slots[hash];
 	while (i != UINT32_MAX) {
-		const Index *index = OBJZ_ARRAY_ELEMENT(_map->indices, i);
-		if (index->object == _object && index->pos == _pos && index->texcoord == _texcoord && index->normal == _normal)
+		const HashedVertex *v = OBJZ_ARRAY_ELEMENT(_map->vertices, i);
+		if (v->object == _object && v->pos == _pos && v->texcoord == _texcoord && v->normal == _normal)
 			return i;
-		i = index->hashNext;
+		i = v->hashNext;
 	}
-	Index index;
-	index.object = _object;
-	index.pos = _pos;
-	index.texcoord = _texcoord;
-	index.normal = _normal;
-	index.hashNext = _map->slots[hash];
-	_map->slots[hash] = _map->indices.length;
-	arrayAppend(&_map->indices, &index);
-	const size_t posSize = sizeof(float) * 3;
-	const size_t texcoordSize = sizeof(float) * 2;
-	const size_t normalSize = sizeof(float) * 3;
-	Vertex vertex;
-	memcpy(vertex.pos, &_map->positions->data[_pos * posSize], posSize);
-	if (_texcoord == UINT32_MAX)
-		vertex.texcoord[0] = vertex.texcoord[1] = 0;
-	else
-		memcpy(vertex.texcoord, &_map->texcoords->data[_texcoord * texcoordSize], texcoordSize);
-	if (_normal == UINT32_MAX)
-		vertex.normal[0] = vertex.normal[1] = vertex.normal[2] = 0;
-	else
-		memcpy(vertex.normal, &_map->normals->data[_normal * normalSize], normalSize);
-	arrayAppend(&_map->vertices, &vertex);
+	HashedVertex v;
+	v.object = _object;
+	v.pos = _pos;
+	v.texcoord = _texcoord;
+	v.normal = _normal;
+	v.hashNext = _map->slots[hash];
+	_map->slots[hash] = _map->vertices.length;
+	arrayAppend(&_map->vertices, &v);
 	return _map->slots[hash];
 }
 
@@ -722,7 +692,6 @@ void objz_setIndexFormat(uint32_t _format) {
 }
 
 void objz_setVertexFormat(size_t _stride, size_t _positionOffset, size_t _texcoordOffset, size_t _normalOffset) {
-	s_vertexDecl.custom = true;
 	s_vertexDecl.stride = _stride;
 	s_vertexDecl.positionOffset = _positionOffset;
 	s_vertexDecl.texcoordOffset = _texcoordOffset;
@@ -901,7 +870,7 @@ objzModel *objz_load(const char *_filename) {
 	arrayInit(&objects, sizeof(objzObject), tempObjects.length); // Exact capacity
 	arrayInit(&indices, sizeof(uint32_t), faces.length * 3); // Exact capacity
 	VertexHashMap vertexHashMap;
-	vertexHashMapInit(&vertexHashMap, &positions, &texcoords, &normals);
+	vertexHashMapInit(&vertexHashMap, positions.length * 2); // Guess capacity
 	for (uint32_t i = 0; i < tempObjects.length; i++) {
 		const TempObject *tempObject = OBJZ_ARRAY_ELEMENT(tempObjects, i);
 		objzObject object;
@@ -984,24 +953,24 @@ objzModel *objz_load(const char *_filename) {
 	model->numMeshes = meshes.length;
 	model->objects = (objzObject *)objects.data;
 	model->numObjects = objects.length;
-	if (!s_vertexDecl.custom) {
-		// Desired vertex format matches the internal one.
-		model->vertices = vertexHashMap.vertices.data;
-	} else {
-		// Copy vertex data into the desired format.
-		model->vertices = objz_malloc(s_vertexDecl.stride * vertexHashMap.vertices.length);
-		memset(model->vertices, 0, s_vertexDecl.stride * vertexHashMap.vertices.length);
-		for (uint32_t i = 0; i < vertexHashMap.vertices.length; i++) {
-			uint8_t *vOut = &((uint8_t *)model->vertices)[i * s_vertexDecl.stride];
-			const Vertex *vIn = OBJZ_ARRAY_ELEMENT(vertexHashMap.vertices, i);
-			if (s_vertexDecl.positionOffset != SIZE_MAX)
-				memcpy(&vOut[s_vertexDecl.positionOffset], vIn->pos, sizeof(float) * 3);
-			if (s_vertexDecl.texcoordOffset != SIZE_MAX)
-				memcpy(&vOut[s_vertexDecl.texcoordOffset], vIn->texcoord, sizeof(float) * 2);
-			if (s_vertexDecl.normalOffset != SIZE_MAX)
-				memcpy(&vOut[s_vertexDecl.normalOffset], vIn->normal, sizeof(float) * 3);
+	model->vertices = objz_malloc(s_vertexDecl.stride * vertexHashMap.vertices.length);
+	for (uint32_t i = 0; i < vertexHashMap.vertices.length; i++) {
+		uint8_t *vOut = &((uint8_t *)model->vertices)[i * s_vertexDecl.stride];
+		const HashedVertex *vIn = OBJZ_ARRAY_ELEMENT(vertexHashMap.vertices, i);
+		if (s_vertexDecl.positionOffset != SIZE_MAX)
+			memcpy(&vOut[s_vertexDecl.positionOffset], OBJZ_ARRAY_ELEMENT(positions, vIn->pos), sizeof(float) * 3);
+		if (s_vertexDecl.texcoordOffset != SIZE_MAX) {
+			if (vIn->texcoord == UINT32_MAX)
+				memset(&vOut[s_vertexDecl.texcoordOffset], 0, sizeof(float) * 2);
+			else
+				memcpy(&vOut[s_vertexDecl.texcoordOffset], OBJZ_ARRAY_ELEMENT(texcoords, vIn->texcoord), sizeof(float) * 2);
 		}
-		objz_free(vertexHashMap.vertices.data);
+		if (s_vertexDecl.normalOffset != SIZE_MAX) {
+			if (vIn->normal == UINT32_MAX)
+				memset(&vOut[s_vertexDecl.normalOffset], 0, sizeof(float) * 3);
+			else
+			memcpy(&vOut[s_vertexDecl.normalOffset], OBJZ_ARRAY_ELEMENT(normals, vIn->normal), sizeof(float) * 3);
+		}
 	}
 	model->numVertices = vertexHashMap.vertices.length;
 	objz_free(positions.data);
@@ -1009,7 +978,7 @@ objzModel *objz_load(const char *_filename) {
 	objz_free(normals.data);
 	objz_free(faceIndices.data);
 	objz_free(tempFaceIndices.data);
-	objz_free(vertexHashMap.indices.data);
+	objz_free(vertexHashMap.vertices.data);
 	vertexHashMapDestroy(&vertexHashMap);
 	return model;
 error:
