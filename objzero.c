@@ -34,14 +34,14 @@ THE SOFTWARE.
 #define OBJZ_FOPEN(_file, _filename, _mode) { if (fopen_s(&_file, _filename, _mode) != 0) _file = NULL; }
 #define OBJZ_STRICMP _stricmp
 #define OBJZ_STRNCAT(_dest, _destSize, _src, _count) strncat_s(_dest, _destSize, _src, _count)
-#define OBJZ_STRNCPY(_dest, _destSize, _src) strncpy_s(_dest, _destSize, _src, _destSize)
+#define OBJZ_STRNCPY(_dest, _destSize, _src) strncpy_s(_dest, _destSize, _src, (_destSize) - 1)
 #define OBJZ_STRTOK(_str, _delim, _context) strtok_s(_str, _delim, _context)
 #else
 #include <strings.h>
 #define OBJZ_FOPEN(_file, _filename, _mode) _file = fopen(_filename, _mode)
 #define OBJZ_STRICMP strcasecmp
 #define OBJZ_STRNCAT(_dest, _destSize, _src, _count) strncat(_dest, _src, _count)
-#define OBJZ_STRNCPY(_dest, _destSize, _src) strncpy(_dest, _src, _destSize)
+#define OBJZ_STRNCPY(_dest, _destSize, _src) strncpy(_dest, _src, (_destSize) - 1)
 #define OBJZ_STRTOK(_str, _delim, _context) strtok(_str, _delim)
 #endif
 
