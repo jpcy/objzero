@@ -40,17 +40,18 @@ void objz_setVertexFormat(size_t _stride, size_t _positionOffset, size_t _texcoo
 
 typedef struct {
 	char name[OBJZ_NAME_MAX];
-	float d;
-	int32_t illum;
-	float Ka[3];
-	float Kd[3];
-	float Ke[3];
-	float Ks[3];
-	float Ni;
-	float Ns;
-	char map_Bump[OBJZ_NAME_MAX];
-	char map_Ka[OBJZ_NAME_MAX];
-	char map_Kd[OBJZ_NAME_MAX];
+	float ambient[3]; // Ka
+	float diffuse[3]; // Kd
+	float emission[3]; // Ke
+	float specular[3]; // Ks
+	float specularExponent; // Ns
+	float opacity; // d
+	char ambientTexture[OBJZ_NAME_MAX]; // map_Ka
+	char bumpTexture[OBJZ_NAME_MAX]; // map_Bump
+	char diffuseTexture[OBJZ_NAME_MAX]; // map_Kd
+	char specularTexture[OBJZ_NAME_MAX]; // map_Ks
+	char specularExponentTexture[OBJZ_NAME_MAX]; // map_Ns
+	char opacityTexture[OBJZ_NAME_MAX];  // map_d
 } objzMaterial;
 
 typedef struct

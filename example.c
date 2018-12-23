@@ -7,17 +7,24 @@ static void printModel(const objzModel *_model) {
 	for (uint32_t i = 0; i < _model->numMaterials; i++) {
 		objzMaterial *mat = &_model->materials[i];
 		printf("Material %u '%s'\n", i, mat->name);
-		printf("   d: %g\n", mat->d);
-		printf("   illum: %d\n", mat->illum);
-		printf("   Ka: %g %g %g\n", mat->Ka[0], mat->Ka[1], mat->Ka[2]);
-		printf("   Kd: %g %g %g\n", mat->Kd[0], mat->Kd[1], mat->Kd[2]);
-		printf("   Ke: %g %g %g\n", mat->Ke[0], mat->Ke[1], mat->Ke[2]);
-		printf("   Ks: %g %g %g\n", mat->Ks[0], mat->Ks[1], mat->Ks[2]);
-		printf("   Ni: %g\n", mat->Ni);
-		printf("   Ns: %g\n", mat->Ns);
-		printf("   map_Bump: %s\n", mat->map_Bump);
-		printf("   map_Ka: %s\n", mat->map_Ka);
-		printf("   map_Kd: %s\n", mat->map_Kd);
+		printf("   opacity: %g\n", mat->opacity);
+		printf("   ambient: %g %g %g\n", mat->ambient[0], mat->ambient[1], mat->ambient[2]);
+		printf("   diffuse: %g %g %g\n", mat->diffuse[0], mat->diffuse[1], mat->diffuse[2]);
+		printf("   emission: %g %g %g\n", mat->emission[0], mat->emission[1], mat->emission[2]);
+		printf("   specular: %g %g %g\n", mat->specular[0], mat->specular[1], mat->specular[2]);
+		printf("   specularExponent: %g\n", mat->specularExponent);
+		if (mat->ambientTexture[0])
+			printf("   ambientTexture: %s\n", mat->ambientTexture);
+		if (mat->bumpTexture[0])
+			printf("   bumpTexture: %s\n", mat->bumpTexture);
+		if (mat->diffuseTexture[0])
+			printf("   diffuseTexture: %s\n", mat->diffuseTexture);
+		if (mat->specularTexture[0])
+			printf("   specularTexture: %s\n", mat->specularTexture);
+		if (mat->specularExponentTexture[0])
+			printf("   specularExponentTexture: %s\n", mat->specularExponentTexture);
+		if (mat->opacityTexture[0])
+			printf("   opacityTexture: %s\n", mat->opacityTexture);
 	}
 	for (uint32_t i = 0; i < _model->numObjects; i++) {
 		objzObject *object = &_model->objects[i];

@@ -216,17 +216,6 @@ static bool parseFloats(Lexer *_lexer, float *_result, uint32_t n) {
 	return true;
 }
 
-static bool parseInt(Lexer *_lexer, int32_t *_result) {
-	Token token;
-	tokenize(_lexer, &token, false);
-	if (strlen(token.text) == 0) {
-		snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Error parsing int", token.line, token.column);
-		return false;
-	}
-	*_result = (int32_t)atoi(token.text);
-	return true;
-}
-
 typedef struct {
 	char *buffer;
 	size_t length;
@@ -285,7 +274,6 @@ char *fileReadLine(File *_file) {
 
 #define OBJZ_MAT_TOKEN_STRING 0
 #define OBJZ_MAT_TOKEN_FLOAT  1
-#define OBJZ_MAT_TOKEN_INT    2
 
 typedef struct {
 	const char *name;
@@ -295,21 +283,24 @@ typedef struct {
 } MaterialTokenDef;
 
 static MaterialTokenDef s_materialTokens[] = {
-	{ "d", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, d), 1 },
-	{ "illum", OBJZ_MAT_TOKEN_INT, offsetof(objzMaterial, illum), 1 },
-	{ "Ka", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, Ka), 3 },
-	{ "Kd", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, Kd), 3 },
-	{ "Ke", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, Ke), 3 },
-	{ "Ks", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, Ks), 3 },
-	{ "Ni", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, Ni), 1 },
-	{ "Ns", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, Ns), 1 },
-	{ "map_Bump", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, map_Bump), 1 },
-	{ "map_Ka", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, map_Ka), 1 },
-	{ "map_Kd", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, map_Kd), 1 }
+	{ "d", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, opacity), 1 },
+	{ "Ka", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, ambient), 3 },
+	{ "Kd", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, diffuse), 3 },
+	{ "Ke", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, emission), 3 },
+	{ "Ks", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, specular), 3 },
+	{ "Ns", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, specularExponent), 1 },
+	{ "bump", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, bumpTexture), 1 },
+	{ "map_Bump", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, bumpTexture), 1 },
+	{ "map_Ka", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, ambientTexture), 1 },
+	{ "map_Kd", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, diffuseTexture), 1 },
+	{ "map_Ks", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, specularTexture), 1 },
+	{ "map_Ns", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, specularExponentTexture), 1 },
+	{ "map_d", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, opacityTexture), 1 }
 };
 
 static void materialInit(objzMaterial *_mat) {
 	memset(_mat, 0, sizeof(*_mat));
+	_mat->opacity = 1;
 }
 
 static bool loadMaterialFile(const char *_objFilename, const char *_materialName, Array *_materials) {
@@ -365,9 +356,6 @@ static bool loadMaterialFile(const char *_objFilename, const char *_materialName
 						OBJZ_STRNCPY((char *)dest, OBJZ_NAME_MAX, token.text);
 					} else if (mtd->type == OBJZ_MAT_TOKEN_FLOAT) {
 						if (!parseFloats(&lexer, (float *)dest, mtd->n))
-							goto cleanup;
-					} else if (mtd->type == OBJZ_MAT_TOKEN_INT) {
-						if (!parseInt(&lexer, (int32_t *)dest))
 							goto cleanup;
 					}
 					break;
