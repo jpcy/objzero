@@ -47,7 +47,8 @@ THE SOFTWARE.
 
 #define OBJZ_MAX_ERROR_LENGTH 1024
 #define OBJZ_MAX_TOKEN_LENGTH 256
-#define OBJZ_LARGEST(_a, _b) ((_a) < (_b) ? (_b) : (_a))
+#define OBJZ_SMALLEST(_a, _b) ((_a) < (_b) ? (_a) : (_b))
+#define OBJZ_LARGEST(_a, _b) ((_a) > (_b) ? (_a) : (_b))
 
 static char s_error[OBJZ_MAX_ERROR_LENGTH] = { 0 };
 static objzReallocFunc s_realloc = NULL;
@@ -487,7 +488,7 @@ static uint32_t normalHashMapInsert(NormalHashMap *_map, const vec3 *_normal) {
 }
 
 static uint32_t guessArrayInitialSize(size_t _fileLength, uint32_t _min, uint32_t _max) {
-	return (uint32_t)(_min + (_max - _min) * (_fileLength / 280000000.0));
+	return (uint32_t)(_min + (_max - _min) * OBJZ_SMALLEST(1.0, _fileLength / 280000000.0));
 }
 
 typedef struct {
