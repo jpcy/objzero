@@ -737,8 +737,9 @@ objzModel *objz_load(const char *_filename) {
 	}
 	// Parse the obj file and any material files.
 	// Faces are triangulated. Other than that, this is straight parsing.
-	Array materials, positions, texcoords, normals, tempObjects, faces;
+	Array materialLibs, materials, positions, texcoords, normals, tempObjects, faces;
 	Array faceIndices, tempFaceIndices; // Re-used per face.
+	arrayInit(&materialLibs, sizeof(char) * OBJZ_MAX_TOKEN_LENGTH, 1);
 	arrayInit(&materials, sizeof(objzMaterial), 16);
 	arrayInit(&positions, sizeof(float) * 3, guessArrayInitialSize(file.length, UINT16_MAX, 1<<21));
 	arrayInit(&texcoords, sizeof(float) * 2, guessArrayInitialSize(file.length, UINT16_MAX, UINT16_MAX));
@@ -843,8 +844,19 @@ objzModel *objz_load(const char *_filename) {
 				snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after 'mtllib'", token.line, token.column);
 				goto error;
 			}
-			if (!loadMaterialFile(_filename, token.text, &materials))
-				goto error;
+			// Don't load the same material library twice.
+			bool alreadyLoaded = false;
+			for (uint32_t i = 0; i < materialLibs.length; i++) {
+				if (OBJZ_STRICMP(token.text, (const char *)OBJZ_ARRAY_ELEMENT(materialLibs, i)) == 0) {
+					alreadyLoaded = true;
+					break;
+				}
+			}
+			if (!alreadyLoaded) {
+				if (!loadMaterialFile(_filename, token.text, &materials))
+					goto error;
+				arrayAppend(&materialLibs, token.text);
+			}
 		} else if (OBJZ_STRICMP(token.text, "s") == 0) {
 			tokenize(&lexer, &token, false);
 			if (token.text[0] == 0) {
@@ -888,6 +900,7 @@ objzModel *objz_load(const char *_filename) {
 			flags |= OBJZ_FLAG_TEXCOORDS;
 		}
 	}
+	OBJZ_FREE(materialLibs.data);
 	OBJZ_FREE(faceIndices.data);
 	OBJZ_FREE(tempFaceIndices.data);
 	fileClose(&file);
@@ -1042,6 +1055,7 @@ objzModel *objz_load(const char *_filename) {
 	return model;
 error:
 	fileClose(&file);
+	OBJZ_FREE(materialLibs.data);
 	OBJZ_FREE(materials.data);
 	OBJZ_FREE(positions.data);
 	OBJZ_FREE(texcoords.data);
