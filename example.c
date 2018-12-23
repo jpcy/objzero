@@ -4,10 +4,9 @@
 #include "objzero.h"
 
 static void printModel(const objzModel *_model) {
-#if 0
 	for (uint32_t i = 0; i < _model->numMaterials; i++) {
 		objzMaterial *mat = &_model->materials[i];
-		printf("Material %s\n", mat->name);
+		printf("Material %u '%s'\n", i, mat->name);
 		printf("   d: %g\n", mat->d);
 		printf("   illum: %d\n", mat->illum);
 		printf("   Ka: %g %g %g\n", mat->Ka[0], mat->Ka[1], mat->Ka[2]);
@@ -20,20 +19,14 @@ static void printModel(const objzModel *_model) {
 		printf("   map_Ka: %s\n", mat->map_Ka);
 		printf("   map_Kd: %s\n", mat->map_Kd);
 	}
-#endif
-#if 0
 	for (uint32_t i = 0; i < _model->numObjects; i++) {
 		objzObject *object = &_model->objects[i];
-		printf("Object: %s\n", object->name);
-		printf("   %d indices\n", object->numIndices);
-		printf("   %d vertices\n", object->numVertices);
-		printf("   %d meshes\n", object->numMeshes);
+		printf("Object: %u '%s', %u triangles, %u vertices, %u meshes\n", i, object->name, object->numIndices / 3, object->numVertices, object->numMeshes);
 		for (uint32_t j = 0; j < object->numMeshes; j++) {
 			objzMesh *mesh = &_model->meshes[object->firstMesh + j];
-			printf("      %d: '%s' material, %d indices\n", j, mesh->materialIndex < 0 ? "<empty>" : _model->materials[mesh->materialIndex].name, mesh->numIndices);
+			printf("   Mesh %u: '%s' material, %u triangles\n", j, mesh->materialIndex < 0 ? "<empty>" : _model->materials[mesh->materialIndex].name, mesh->numIndices / 3);
 		}
 	}
-#endif
 	printf("%u objects\n", _model->numObjects);
 	printf("%u materials\n", _model->numMaterials);
 	printf("%u meshes\n", _model->numMeshes);
@@ -44,6 +37,7 @@ static void printModel(const objzModel *_model) {
 static size_t s_totalBytesUsed = 0;
 static size_t s_peakBytesUsed = 0;
 
+// Custom realloc that tracks memory usage by prepending the size to every allocation.
 static void *custom_realloc(void *_ptr, size_t _size) {
 	uint32_t *realPtr = _ptr ? ((uint32_t *)_ptr) - 1 : NULL;
 	if (!_size) {
@@ -75,9 +69,8 @@ int main(int argc, char **argv) {
 		printf("ERROR: %s\n", objz_getError());
 		return 1;
 	}
-	printf("%g milliseconds elapsed\n", (end - start) * 1000.0 / (double)CLOCKS_PER_SEC);
-	printf("%0.2fMB peak memory usage\n", s_peakBytesUsed / 1024.0f / 1024.0f);
 	printModel(model);
+	printf("objz_load: %g ms, %0.2f MB\n", (end - start) * 1000.0 / (double)CLOCKS_PER_SEC, s_peakBytesUsed / 1024.0f / 1024.0f);
 	objz_destroy(model);
 	return 0;
 }

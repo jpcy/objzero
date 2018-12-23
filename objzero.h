@@ -13,17 +13,23 @@ void objz_setRealloc(objzReallocFunc _realloc);
 #define OBJZ_INDEX_FORMAT_AUTO 0
 #define OBJZ_INDEX_FORMAT_U32  1
 
-// OBJZ_INDEX_FORMAT_AUTO: Indices are uint32_t if UINT16_MAX threshold crossed, otherwise they are uint16_t.
-// OBJZ_INDEX_FORMAT_U32: Indices are always uint32_t.
+// OBJZ_INDEX_FORMAT_AUTO: objzModel indices are uint32_t if any index > UINT16_MAX, otherwise they are uint16_t.
+// OBJZ_INDEX_FORMAT_U32: objzModel indices are always uint32_t.
 // Default is OBJZ_INDEX_FORMAT_AUTO.
 void objz_setIndexFormat(uint32_t _format);
 
 /*
 Default vertex data structure looks like this:
 
+typedef struct {
 float pos[3];
 float texcoord[2];
 float normal[3];
+} Vertex;
+
+Which is equivalent to:
+
+objz_setVertexFormat(sizeof(Vertex), offsetof(Vertex, pos), offsetof(Vertex, texcoord), offsetof(Vertex, normal));
 
 texcoordOffset - optional: set to SIZE_MAX to ignore
 normalOffset - optional: set to SIZE_MAX to ignore
@@ -58,7 +64,8 @@ typedef struct {
 	char name[OBJZ_NAME_MAX];
 	uint32_t firstMesh;
 	uint32_t numMeshes;
-	// If you want per-object vertices and indices, use these and subtract firstVertex from all the objzModel::indices in firstIndex to firstIndex + numIndices range.
+
+	// If you want per-object vertices and indices, use these and subtract firstVertex from all the objzModel indices in firstIndex to firstIndex + numIndices - 1 range.
 	uint32_t firstIndex;
 	uint32_t numIndices;
 	uint32_t firstVertex;
@@ -83,7 +90,7 @@ typedef struct {
 	uint32_t numMeshes;
 	objzObject *objects;
 	uint32_t numObjects;
-	void *vertices;
+	void *vertices; // See: objz_setVertexFormat
 	uint32_t numVertices;
 } objzModel;
 
