@@ -47,6 +47,7 @@ THE SOFTWARE.
 
 #define OBJZ_MAX_ERROR_LENGTH 1024
 #define OBJZ_MAX_TOKEN_LENGTH 256
+#define OBJZ_RAW_ARRAY_LEN(_x) (sizeof(_x) / sizeof((_x)[0]))
 #define OBJZ_SMALLEST(_a, _b) ((_a) < (_b) ? (_a) : (_b))
 #define OBJZ_LARGEST(_a, _b) ((_a) > (_b) ? (_a) : (_b))
 
@@ -217,6 +218,18 @@ static bool parseFloats(Lexer *_lexer, float *_result, uint32_t n) {
 	return true;
 }
 
+static bool skipTokens(Lexer *_lexer, int _n) {
+	Token token;
+	for (int i = 0; i < _n; i++) {
+		tokenize(_lexer, &token, false);
+		if (strlen(token.text) == 0) {
+			snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Error skipping tokens", token.line, token.column);
+			return false;
+		}
+	}
+	return true;
+}
+
 typedef struct {
 	char *buffer;
 	size_t length;
@@ -281,9 +294,9 @@ typedef struct {
 	uint32_t type;
 	size_t offset;
 	uint32_t n;
-} MaterialTokenDef;
+} MaterialProperty;
 
-static MaterialTokenDef s_materialTokens[] = {
+static MaterialProperty s_materialProperties[] = {
 	{ "d", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, opacity), 1 },
 	{ "Ka", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, ambient), 3 },
 	{ "Kd", OBJZ_MAT_TOKEN_FLOAT, offsetof(objzMaterial, diffuse), 3 },
@@ -294,9 +307,30 @@ static MaterialTokenDef s_materialTokens[] = {
 	{ "map_Bump", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, bumpTexture), 1 },
 	{ "map_Ka", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, ambientTexture), 1 },
 	{ "map_Kd", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, diffuseTexture), 1 },
+	{ "map_Ke", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, emissionTexture), 1 },
 	{ "map_Ks", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, specularTexture), 1 },
 	{ "map_Ns", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, specularExponentTexture), 1 },
 	{ "map_d", OBJZ_MAT_TOKEN_STRING, offsetof(objzMaterial, opacityTexture), 1 }
+};
+
+typedef struct {
+	const char *name;
+	uint32_t n;
+} MaterialMapArg;
+
+static MaterialMapArg s_materialMapArgs[] = {
+	{ "-blendu", 1 },
+	{ "-blendv", 1 },
+	{ "-bm", 1 },
+	{ "-boost", 1 },
+	{ "-clamp", 1 },
+	{ "-imfchan", 1 },
+	{ "-mm", 2 },
+	{ "-o", 3 },
+	{ "-s", 3 },
+	{ "-t", 3 },
+	{ "-texres", 1 },
+	{ "-type", 1 }
 };
 
 static void materialInit(objzMaterial *_mat) {
@@ -344,19 +378,35 @@ static bool loadMaterialFile(const char *_objFilename, const char *_materialName
 			materialInit(&mat);
 			OBJZ_STRNCPY(mat.name, sizeof(mat.name), token.text);
 		} else {
-			for (size_t i = 0; i < sizeof(s_materialTokens) / sizeof(s_materialTokens[0]); i++) {
-				const MaterialTokenDef *mtd = &s_materialTokens[i];
-				uint8_t *dest = &((uint8_t *)&mat)[mtd->offset];
-				if (OBJZ_STRICMP(token.text, mtd->name) == 0) {
-					if (mtd->type == OBJZ_MAT_TOKEN_STRING) {
-						tokenize(&lexer, &token, false);
-						if (token.text[0] == 0) {
-							snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected name after '%s'", token.line, token.column, mtd->name);
-							goto cleanup;
+			for (size_t i = 0; i < OBJZ_RAW_ARRAY_LEN(s_materialProperties); i++) {
+				const MaterialProperty *prop = &s_materialProperties[i];
+				uint8_t *dest = &((uint8_t *)&mat)[prop->offset];
+				if (OBJZ_STRICMP(token.text, prop->name) == 0) {
+					if (prop->type == OBJZ_MAT_TOKEN_STRING) {
+						Token argToken;
+						for (int j = 0;; j++) {
+							tokenize(&lexer, &argToken, false);
+							if (argToken.text[0] == 0) {
+								if (j == 0) {
+									snprintf(s_error, OBJZ_MAX_ERROR_LENGTH, "(%u:%u) Expected token after '%s'", token.line, token.column, prop->name);
+									goto cleanup;
+								}
+								break;
+							}
+							bool match = false;
+							for (size_t k = 0; k < OBJZ_RAW_ARRAY_LEN(s_materialMapArgs); k++) {
+								const MaterialMapArg *arg = &s_materialMapArgs[k];
+								if (OBJZ_STRICMP(argToken.text, arg->name) == 0) {
+									match = true;
+									skipTokens(&lexer, arg->n);
+									break;
+								}
+							}
+							if (!match)
+								OBJZ_STRNCPY((char *)dest, OBJZ_NAME_MAX, argToken.text);
 						}
-						OBJZ_STRNCPY((char *)dest, OBJZ_NAME_MAX, token.text);
-					} else if (mtd->type == OBJZ_MAT_TOKEN_FLOAT) {
-						if (!parseFloats(&lexer, (float *)dest, mtd->n))
+					} else if (prop->type == OBJZ_MAT_TOKEN_FLOAT) {
+						if (!parseFloats(&lexer, (float *)dest, prop->n))
 							goto cleanup;
 					}
 					break;

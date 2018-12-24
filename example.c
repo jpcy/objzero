@@ -19,6 +19,8 @@ static void printModel(const objzModel *_model) {
 			printf("   bumpTexture: %s\n", mat->bumpTexture);
 		if (mat->diffuseTexture[0])
 			printf("   diffuseTexture: %s\n", mat->diffuseTexture);
+		if (mat->emissionTexture[0])
+			printf("   emissionTexture: %s\n", mat->emissionTexture);
 		if (mat->specularTexture[0])
 			printf("   specularTexture: %s\n", mat->specularTexture);
 		if (mat->specularExponentTexture[0])

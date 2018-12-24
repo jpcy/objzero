@@ -49,6 +49,7 @@ typedef struct {
 	char ambientTexture[OBJZ_NAME_MAX]; // map_Ka
 	char bumpTexture[OBJZ_NAME_MAX]; // map_Bump
 	char diffuseTexture[OBJZ_NAME_MAX]; // map_Kd
+	char emissionTexture[OBJZ_NAME_MAX]; // map_Ke
 	char specularTexture[OBJZ_NAME_MAX]; // map_Ks
 	char specularExponentTexture[OBJZ_NAME_MAX]; // map_Ns
 	char opacityTexture[OBJZ_NAME_MAX];  // map_d
