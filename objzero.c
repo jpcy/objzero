@@ -335,6 +335,7 @@ static MaterialMapArg s_materialMapArgs[] = {
 
 static void materialInit(objzMaterial *_mat) {
 	memset(_mat, 0, sizeof(*_mat));
+	_mat->diffuse[0] = _mat->diffuse[1] = _mat->diffuse[2] = 1;
 	_mat->opacity = 1;
 }
 
