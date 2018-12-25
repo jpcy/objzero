@@ -57,7 +57,7 @@ int main(int argc, char **argv) {
 		ASSERT(!parseVertexAttribIndices(&token, triplet));
 		snprintf(token.text, sizeof(token.text), "/");
 		ASSERT(!parseVertexAttribIndices(&token, triplet));
-		snprintf(token.text, sizeof(token.text), "");
+        token.text[0] = 0;
 		ASSERT(!parseVertexAttribIndices(&token, triplet));
 	}
 	printf("Done\n");

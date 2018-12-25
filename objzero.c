@@ -25,9 +25,11 @@ THE SOFTWARE.
 #include <float.h>
 #include <math.h>
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <limits.h>
 #include "objzero.h"
 
 #ifdef _MSC_VER

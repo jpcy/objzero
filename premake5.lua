@@ -33,9 +33,14 @@ project "example"
 	warnings "Extra"
 	files { "example.c" }
 	links { "objzero" }
+    filter "system:linux"
+        links { "m" }
 
 project "tests"
 	kind "ConsoleApp"
 	language "C"
 	cdialect "C99"
 	files { "tests.c" }
+    filter "system:linux"
+        links { "m" }
+
