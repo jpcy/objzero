@@ -137,6 +137,10 @@ static void arrayInit(Array *_array, size_t _elementSize, uint32_t _initialCapac
 	_array->initialCapacity = _initialCapacity;
 }
 
+static void arrayDestroy(Array *_array) {
+	OBJZ_FREE(_array->data);
+}
+
 static void arrayAppend(Array *_array, const void *_element) {
 	if (!_array->data) {
 		_array->data = OBJZ_MALLOC(_array->elementSize * _array->initialCapacity);
@@ -457,7 +461,7 @@ static void vertexHashMapInit(VertexHashMap *_map, uint32_t _initialCapacity) {
 
 static void vertexHashMapDestroy(VertexHashMap *_map) {
 	OBJZ_FREE(_map->slots);
-	OBJZ_FREE(_map->vertices.data);
+	arrayDestroy(&_map->vertices);
 }
 
 static uint32_t vertexHashMapInsert(VertexHashMap *_map, uint32_t _object, uint32_t _pos, uint32_t _texcoord, uint32_t _normal) {
@@ -515,7 +519,7 @@ static void normalHashMapInit(NormalHashMap *_map, uint32_t _initialCapacity, Ar
 
 static void normalHashMapDestroy(NormalHashMap *_map) {
 	OBJZ_FREE(_map->slots);
-	OBJZ_FREE(_map->hashedNormals.data);
+	arrayDestroy(&_map->hashedNormals);
 }
 
 static uint32_t normalHashMapInsert(NormalHashMap *_map, const vec3 *_normal) {
@@ -954,9 +958,9 @@ objzModel *objz_load(const char *_filename) {
 			flags |= OBJZ_FLAG_TEXCOORDS;
 		}
 	}
-	OBJZ_FREE(materialLibs.data);
-	OBJZ_FREE(faceIndices.data);
-	OBJZ_FREE(tempFaceIndices.data);
+	arrayDestroy(&materialLibs);
+	arrayDestroy(&faceIndices);
+	arrayDestroy(&tempFaceIndices);
 	fileClose(&file);
 	// Do some post-processing of parsed data:
 	//   * generate normals
@@ -1058,9 +1062,9 @@ objzModel *objz_load(const char *_filename) {
 	}
 	if (generateNormals)
 		normalHashMapDestroy(&normalHashMap);
-	OBJZ_FREE(tempObjects.data);
-	OBJZ_FREE(faces.data);
-	OBJZ_FREE(faceNormals.data);
+	arrayDestroy(&tempObjects);
+	arrayDestroy(&faces);
+	arrayDestroy(&faceNormals);
 	// Build output data structure.
 	objzModel *model = OBJZ_MALLOC(sizeof(objzModel));
 	model->flags = flags;
@@ -1073,7 +1077,7 @@ objzModel *objz_load(const char *_filename) {
 			uint32_t *index = (uint32_t *)OBJZ_ARRAY_ELEMENT(indices, i);
 			((uint16_t *)model->indices)[i] = (uint16_t)*index;
 		}
-		OBJZ_FREE(indices.data);
+		arrayDestroy(&indices);
 	}
 	model->numIndices = indices.length;
 	model->materials = (objzMaterial *)materials.data;
@@ -1102,22 +1106,22 @@ objzModel *objz_load(const char *_filename) {
 		}
 	}
 	model->numVertices = vertexHashMap.vertices.length;
-	OBJZ_FREE(positions.data);
-	OBJZ_FREE(texcoords.data);
-	OBJZ_FREE(normals.data);
+	arrayDestroy(&positions);
+	arrayDestroy(&texcoords);
+	arrayDestroy(&normals);
 	vertexHashMapDestroy(&vertexHashMap);
 	return model;
 error:
 	fileClose(&file);
-	OBJZ_FREE(materialLibs.data);
-	OBJZ_FREE(materials.data);
-	OBJZ_FREE(positions.data);
-	OBJZ_FREE(texcoords.data);
-	OBJZ_FREE(normals.data);
-	OBJZ_FREE(tempObjects.data);
-	OBJZ_FREE(faces.data);
-	OBJZ_FREE(faceIndices.data);
-	OBJZ_FREE(tempFaceIndices.data);
+	arrayDestroy(&materialLibs);
+	arrayDestroy(&materials);
+	arrayDestroy(&positions);
+	arrayDestroy(&texcoords);
+	arrayDestroy(&normals);
+	arrayDestroy(&tempObjects);
+	arrayDestroy(&faces);
+	arrayDestroy(&faceIndices);
+	arrayDestroy(&tempFaceIndices);
 	return NULL;
 }
 
