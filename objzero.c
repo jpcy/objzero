@@ -155,6 +155,45 @@ static void arrayAppend(Array *_array, const void *_element) {
 
 #define OBJZ_ARRAY_ELEMENT(_array, _index) (void *)&(_array).data[(_array).elementSize * (_index)]
 
+// Array: reallocates the buffer when full. The buffer is a contiguous area of memory.
+// ChunkedArray: allocates another chunk of memory when full. Buffer is a linked list of chunks, not contiguous.
+typedef struct {
+	Array chunks;
+	uint32_t elementsPerChunk;
+	size_t elementSize;
+	uint32_t length;
+} ChunkedArray;
+
+static void chunkedArrayInit(ChunkedArray *_array, size_t _elementSize, uint32_t _chunkLength) {
+	arrayInit(&_array->chunks, sizeof(void *), 32);
+	_array->elementsPerChunk = _chunkLength;
+	_array->elementSize = _elementSize;
+	_array->length = 0;
+}
+
+static void chunkedArrayDestroy(ChunkedArray *_array) {
+	for (uint32_t i = 0; i < _array->chunks.length; i++) {
+		void **chunk = OBJZ_ARRAY_ELEMENT(_array->chunks, i);
+		OBJZ_FREE(*chunk);
+	}
+	arrayDestroy(&_array->chunks);
+}
+
+static void chunkedArrayAppend(ChunkedArray *_array, const void *_element) {
+	if (_array->length >= _array->chunks.length * _array->elementsPerChunk) {
+		void *newChunk = OBJZ_MALLOC(_array->elementsPerChunk * _array->elementSize);
+		arrayAppend(&_array->chunks, &newChunk);
+	}
+	uint8_t **chunk = OBJZ_ARRAY_ELEMENT(_array->chunks, _array->length / _array->elementsPerChunk);
+	memcpy(&(*chunk)[_array->elementSize * (_array->length % _array->elementsPerChunk)], _element, _array->elementSize);
+	_array->length++;
+}
+
+static void *chunkedArrayElement(const ChunkedArray *_array, uint32_t _index) {
+	uint8_t **chunk = OBJZ_ARRAY_ELEMENT(_array->chunks, _index / _array->elementsPerChunk);
+	return &(*chunk)[_array->elementSize * (_index % _array->elementsPerChunk)];
+}
+
 typedef struct {
 	char *buf;
 	uint32_t line, column;
@@ -500,7 +539,7 @@ typedef struct {
 	uint32_t *slots;
 	uint32_t numSlots;
 	Array hashedNormals;
-	Array *normals;
+	ChunkedArray *normals;
 } NormalHashMap;
 
 static void normalHashMapClear(NormalHashMap *_map) {
@@ -509,7 +548,7 @@ static void normalHashMapClear(NormalHashMap *_map) {
 	_map->hashedNormals.length = 0;
 }
 
-static void normalHashMapInit(NormalHashMap *_map, uint32_t _initialCapacity, Array *_normals) {
+static void normalHashMapInit(NormalHashMap *_map, uint32_t _initialCapacity, ChunkedArray *_normals) {
 	_map->numSlots = (uint32_t)(_initialCapacity * 1.3f);
 	_map->slots = OBJZ_MALLOC(sizeof(uint32_t) * _map->numSlots);
 	_map->normals = _normals;
@@ -531,7 +570,7 @@ static uint32_t normalHashMapInsert(NormalHashMap *_map, const vec3 *_normal) {
 	uint32_t i = _map->slots[hash];
 	while (i != UINT32_MAX) {
 		const HashedNormal *n = OBJZ_ARRAY_ELEMENT(_map->hashedNormals, i);
-		if (vec3Equal(OBJZ_ARRAY_ELEMENT(*_map->normals, n->normalIndex), _normal, FLT_EPSILON))
+		if (vec3Equal(chunkedArrayElement(_map->normals, n->normalIndex), _normal, FLT_EPSILON))
 			return n->normalIndex;
 		i = n->hashNext;
 	}
@@ -540,12 +579,8 @@ static uint32_t normalHashMapInsert(NormalHashMap *_map, const vec3 *_normal) {
 	n.hashNext = _map->slots[hash];
 	_map->slots[hash] = _map->hashedNormals.length;
 	arrayAppend(&_map->hashedNormals, &n);
-	arrayAppend(_map->normals, _normal);
+	chunkedArrayAppend(_map->normals, _normal);
 	return n.normalIndex;
-}
-
-static uint32_t guessArrayInitialSize(size_t _fileLength, uint32_t _min, uint32_t _max) {
-	return (uint32_t)(_min + (_max - _min) * OBJZ_SMALLEST(1.0, _fileLength / 280000000.0));
 }
 
 typedef struct {
@@ -633,14 +668,14 @@ static int pnpoly(int nvert, float *vertx, float *verty, float testx, float test
 
 // Ear clipping triangulation from tinyobjloader
 // https://github.com/syoyo/tinyobjloader
-static void triangulate(const Array *_indices, const Array *_positions, Array *_tempIndices, Array *_faces, int32_t _materialIndex, uint16_t _smoothingGroup) {
+static void triangulate(const Array *_indices, const ChunkedArray *_positions, Array *_tempIndices, ChunkedArray *_faces, int32_t _materialIndex, uint16_t _smoothingGroup) {
 	// find the two axes to work in
 	uint32_t axes[2] = { 1, 2 };
 	for (uint32_t i = 0; i < _indices->length; i++) {
 		const IndexTriplet *indices = (const IndexTriplet *)_indices->data;
 		vec3 v[3];
 		for (int j = 0; j < 3; j++)
-			v[j] = *(const vec3 *)OBJZ_ARRAY_ELEMENT(*_positions, indices[(i + j) % _indices->length].v);
+			v[j] = *(const vec3 *)chunkedArrayElement(_positions, indices[(i + j) % _indices->length].v);
 		vec3 edges[2];
 		OBJZ_VEC3_SUB(edges[0], v[1], v[0]);
 		OBJZ_VEC3_SUB(edges[1], v[2], v[1]);
@@ -661,8 +696,8 @@ static void triangulate(const Array *_indices, const Array *_positions, Array *_
 	for (uint32_t i = 0; i < _indices->length; i++) {
 		const IndexTriplet *i0 = OBJZ_ARRAY_ELEMENT(*_indices, (i + 0) % _indices->length);
 		const IndexTriplet *i1 = OBJZ_ARRAY_ELEMENT(*_indices, (i + 1) % _indices->length);
-		const float *v0 = OBJZ_ARRAY_ELEMENT(*_positions, i0->v);
-		const float *v1 = OBJZ_ARRAY_ELEMENT(*_positions, i1->v);
+		const float *v0 = chunkedArrayElement(_positions, i0->v);
+		const float *v1 = chunkedArrayElement(_positions, i1->v);
 		area += (v0[axes[0]] * v1[axes[1]] - v0[axes[1]] * v1[axes[0]]) * 0.5f;
 	}
 	// Copy vertices.
@@ -691,7 +726,7 @@ static void triangulate(const Array *_indices, const Array *_positions, Array *_
 		float vy[3];
 		for (uint32_t i = 0; i < 3; i++) {
 			ind[i] = OBJZ_ARRAY_ELEMENT(*remainingIndices, (guess_vert + i) % remainingIndices->length);
-			const float *pos = (float *)OBJZ_ARRAY_ELEMENT(*_positions, ind[i]->v);
+			const float *pos = (float *)chunkedArrayElement(_positions, ind[i]->v);
 			vx[i] = pos[axes[0]];
 			vy[i] = pos[axes[1]];
 		}
@@ -713,8 +748,8 @@ static void triangulate(const Array *_indices, const Array *_positions, Array *_
 			if (idx >= remainingIndices->length)
 				continue; // ???
 			uint32_t ovi = ((IndexTriplet *)OBJZ_ARRAY_ELEMENT(*remainingIndices, idx))->v;
-			float tx = ((float *)OBJZ_ARRAY_ELEMENT(*_positions, ovi))[axes[0]];
-			float ty = ((float *)OBJZ_ARRAY_ELEMENT(*_positions, ovi))[axes[1]];
+			float tx = ((float *)chunkedArrayElement(_positions, ovi))[axes[0]];
+			float ty = ((float *)chunkedArrayElement(_positions, ovi))[axes[1]];
 			if (pnpoly(3, vx, vy, tx, ty)) {
 				overlap = true;
 				break;
@@ -730,7 +765,7 @@ static void triangulate(const Array *_indices, const Array *_positions, Array *_
 			face.indices[i] = *ind[i];
 		face.materialIndex = (int16_t)_materialIndex;
 		face.smoothingGroup = _smoothingGroup;
-		arrayAppend(_faces, &face);
+		chunkedArrayAppend(_faces, &face);
 		// remove v1 from the list
 		uint32_t removed_vert_index = (guess_vert + 1) % remainingIndices->length;
 		while (removed_vert_index + 1 < remainingIndices->length) {
@@ -746,16 +781,16 @@ static void triangulate(const Array *_indices, const Array *_positions, Array *_
 			face.indices[i] = *(IndexTriplet *)OBJZ_ARRAY_ELEMENT(*remainingIndices, i);
 		face.materialIndex = (int16_t)_materialIndex;
 		face.smoothingGroup = _smoothingGroup;
-		arrayAppend(_faces, &face);
+		chunkedArrayAppend(_faces, &face);
 	}
 }
 
-static vec3 calculateSmoothNormal(uint32_t _pos, Array *_faces, Array *_faceNormals, uint16_t _smoothingGroup) {
+static vec3 calculateSmoothNormal(uint32_t _pos, ChunkedArray *_faces, Array *_faceNormals, uint16_t _smoothingGroup) {
 	vec3 normal;
 	OBJZ_VEC3_SET(normal, 0, 0, 0);
 	int n = 0;
 	for (uint32_t i = 0; i < _faces->length; i++) {
-		const Face *face = OBJZ_ARRAY_ELEMENT(*_faces, i);
+		const Face *face = chunkedArrayElement(_faces, i);
 		if (face->smoothingGroup != _smoothingGroup)
 			continue;
 		for (int j = 0; j < 3; j++) {
@@ -795,15 +830,16 @@ objzModel *objz_load(const char *_filename) {
 	}
 	// Parse the obj file and any material files.
 	// Faces are triangulated. Other than that, this is straight parsing.
-	Array materialLibs, materials, positions, texcoords, normals, tempObjects, faces;
+	Array materialLibs, materials, tempObjects;
+	ChunkedArray positions, texcoords, normals, faces;
 	Array faceIndices, tempFaceIndices; // Re-used per face.
 	arrayInit(&materialLibs, sizeof(char) * OBJZ_MAX_TOKEN_LENGTH, 1);
 	arrayInit(&materials, sizeof(objzMaterial), 16);
-	arrayInit(&positions, sizeof(float) * 3, guessArrayInitialSize(file.length, UINT16_MAX, 1<<21));
-	arrayInit(&texcoords, sizeof(float) * 2, guessArrayInitialSize(file.length, UINT16_MAX, UINT16_MAX));
-	arrayInit(&normals, sizeof(float) * 3, guessArrayInitialSize(file.length, 1<<14, 1<<14));
-	arrayInit(&tempObjects, sizeof(TempObject), guessArrayInitialSize(file.length, 64, 64));
-	arrayInit(&faces, sizeof(Face), guessArrayInitialSize(file.length, 1<<17, 1<<23));
+	arrayInit(&tempObjects, sizeof(TempObject), 64);
+	chunkedArrayInit(&positions, sizeof(float) * 3, 100000);
+	chunkedArrayInit(&texcoords, sizeof(float) * 2, 100000);
+	chunkedArrayInit(&normals, sizeof(float) * 3, 100000);
+	chunkedArrayInit(&faces, sizeof(Face), 100000);
 	arrayInit(&faceIndices, sizeof(IndexTriplet), 8);
 	arrayInit(&tempFaceIndices, sizeof(IndexTriplet), 8);
 	bool generateNormals = false;
@@ -867,7 +903,7 @@ objzModel *objz_load(const char *_filename) {
 				face.smoothingGroup = currentSmoothingGroup;
 				for (int i = 0; i < 3; i++)
 					face.indices[i] = *(IndexTriplet *)OBJZ_ARRAY_ELEMENT(faceIndices, i);
-				arrayAppend(&faces, &face);
+				chunkedArrayAppend(&faces, &face);
 				object->numFaces++;
 			} else {
 				const uint32_t prevFacesLength = faces.length;
@@ -943,18 +979,18 @@ objzModel *objz_load(const char *_filename) {
 			float pos[3];
 			if (!parseFloats(&lexer, pos, 3))
 				goto error;
-			arrayAppend(&positions, pos);
+			chunkedArrayAppend(&positions, pos);
 		} else if (OBJZ_STRICMP(token.text, "vn") == 0) {
 			float normal[3];
 			if (!parseFloats(&lexer, normal, 3))
 				goto error;
-			arrayAppend(&normals, normal);
+			chunkedArrayAppend(&normals, normal);
 			flags |= OBJZ_FLAG_NORMALS;
 		} else if (OBJZ_STRICMP(token.text, "vt") == 0) {
 			float texcoord[2];
 			if (!parseFloats(&lexer, texcoord, 2))
 				goto error;
-			arrayAppend(&texcoords, texcoord);
+			chunkedArrayAppend(&texcoords, texcoord);
 			flags |= OBJZ_FLAG_TEXCOORDS;
 		}
 	}
@@ -972,12 +1008,14 @@ objzModel *objz_load(const char *_filename) {
 		for (uint32_t i = 0; i < tempObjects.length; i++) {
 			const TempObject *tempObject = OBJZ_ARRAY_ELEMENT(tempObjects, i);
 			for (uint32_t j = 0; j < tempObject->numFaces; j++) {
-				const Face *face = OBJZ_ARRAY_ELEMENT(faces, tempObject->firstFace + j);
+				const Face *face = chunkedArrayElement(&faces, tempObject->firstFace + j);
 				vec3 edge0, edge1;
 				vec3 normal;
-				const vec3 *p = (const vec3 *)positions.data;
-				OBJZ_VEC3_SUB(edge0, p[face->indices[1].v], p[face->indices[0].v]);
-				OBJZ_VEC3_SUB(edge1, p[face->indices[2].v], p[face->indices[0].v]);
+				const vec3 *p0 = chunkedArrayElement(&positions, face->indices[0].v);
+				const vec3 *p1 =  chunkedArrayElement(&positions, face->indices[1].v);
+				const vec3 *p2 = chunkedArrayElement(&positions, face->indices[2].v);
+				OBJZ_VEC3_SUB(edge0, *p1, *p0);
+				OBJZ_VEC3_SUB(edge1, *p2, *p0);
 				OBJZ_VEC3_CROSS(normal, edge0, edge1);
 				vec3Normalize(&normal, &normal);
 				arrayAppend(&faceNormals, &normal);
@@ -1014,7 +1052,7 @@ objzModel *objz_load(const char *_filename) {
 			mesh.numIndices = 0;
 			mesh.materialIndex = material;
 			for (uint32_t j = 0; j < tempObject->numFaces; j++) {
-				const Face *face = OBJZ_ARRAY_ELEMENT(faces, tempObject->firstFace + j);
+				const Face *face = chunkedArrayElement(&faces, tempObject->firstFace + j);
 				if (face->materialIndex != (int16_t)material)
 					continue;
 				uint32_t faceNormalIndex = UINT32_MAX;
@@ -1063,7 +1101,7 @@ objzModel *objz_load(const char *_filename) {
 	if (generateNormals)
 		normalHashMapDestroy(&normalHashMap);
 	arrayDestroy(&tempObjects);
-	arrayDestroy(&faces);
+	chunkedArrayDestroy(&faces);
 	arrayDestroy(&faceNormals);
 	// Build output data structure.
 	objzModel *model = OBJZ_MALLOC(sizeof(objzModel));
@@ -1091,35 +1129,35 @@ objzModel *objz_load(const char *_filename) {
 		uint8_t *vOut = &((uint8_t *)model->vertices)[i * s_vertexDecl.stride];
 		const HashedVertex *vIn = OBJZ_ARRAY_ELEMENT(vertexHashMap.vertices, i);
 		if (s_vertexDecl.positionOffset != SIZE_MAX)
-			memcpy(&vOut[s_vertexDecl.positionOffset], OBJZ_ARRAY_ELEMENT(positions, vIn->pos), sizeof(float) * 3);
+			memcpy(&vOut[s_vertexDecl.positionOffset], chunkedArrayElement(&positions, vIn->pos), sizeof(float) * 3);
 		if (s_vertexDecl.texcoordOffset != SIZE_MAX) {
 			if (vIn->texcoord == UINT32_MAX)
 				memset(&vOut[s_vertexDecl.texcoordOffset], 0, sizeof(float) * 2);
 			else
-				memcpy(&vOut[s_vertexDecl.texcoordOffset], OBJZ_ARRAY_ELEMENT(texcoords, vIn->texcoord), sizeof(float) * 2);
+				memcpy(&vOut[s_vertexDecl.texcoordOffset], chunkedArrayElement(&texcoords, vIn->texcoord), sizeof(float) * 2);
 		}
 		if (s_vertexDecl.normalOffset != SIZE_MAX) {
 			if (vIn->normal == UINT32_MAX)
 				memset(&vOut[s_vertexDecl.normalOffset], 0, sizeof(float) * 3);
 			else
-			memcpy(&vOut[s_vertexDecl.normalOffset], OBJZ_ARRAY_ELEMENT(normals, vIn->normal), sizeof(float) * 3);
+			memcpy(&vOut[s_vertexDecl.normalOffset], chunkedArrayElement(&normals, vIn->normal), sizeof(float) * 3);
 		}
 	}
 	model->numVertices = vertexHashMap.vertices.length;
-	arrayDestroy(&positions);
-	arrayDestroy(&texcoords);
-	arrayDestroy(&normals);
+	chunkedArrayDestroy(&positions);
+	chunkedArrayDestroy(&texcoords);
+	chunkedArrayDestroy(&normals);
 	vertexHashMapDestroy(&vertexHashMap);
 	return model;
 error:
 	fileClose(&file);
 	arrayDestroy(&materialLibs);
 	arrayDestroy(&materials);
-	arrayDestroy(&positions);
-	arrayDestroy(&texcoords);
-	arrayDestroy(&normals);
 	arrayDestroy(&tempObjects);
-	arrayDestroy(&faces);
+	chunkedArrayDestroy(&positions);
+	chunkedArrayDestroy(&texcoords);
+	chunkedArrayDestroy(&normals);
+	chunkedArrayDestroy(&faces);
 	arrayDestroy(&faceIndices);
 	arrayDestroy(&tempFaceIndices);
 	return NULL;
