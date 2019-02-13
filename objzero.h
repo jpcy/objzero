@@ -122,7 +122,7 @@ typedef struct {
 
 objzModel *objz_load(const char *_filename);
 void objz_destroy(objzModel *_model);
-const char *objz_getError();
+const char *objz_getError(); // Includes warnings.
 
 #ifdef __cplusplus
 } // extern "C"

@@ -77,6 +77,10 @@ int main(int argc, char **argv) {
 	if (!model) {
 		printf("ERROR: %s\n", objz_getError());
 		return 1;
+	} else {
+		const char *warning = objz_getError();
+		if (warning)
+			printf("%s\n", warning);
 	}
 	printModel(model);
 	printf("objz_load: %g ms, %0.2f MB\n", (end - start) * 1000.0 / (double)CLOCKS_PER_SEC, s_peakBytesUsed / 1024.0f / 1024.0f);
