@@ -1,8 +1,10 @@
 /*
-The MIT License (MIT)
+https://github.com/jpcy/objzero
 
 Copyright (c) 2018 Jonathan Young
 Copyright (c) 2012-2018 Syoyo Fujita and many contributors.
+
+The MIT License (MIT)
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
