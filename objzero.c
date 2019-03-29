@@ -141,8 +141,9 @@ static void vec3Normalize(vec3 *_out, const vec3 *_in) {
 	if (len > 0) {
 		len = 1.0f / sqrtf(len);
 		OBJZ_VEC3_MUL(*_out, *_in, len);
-	} else
+	} else {
 		OBJZ_VEC3_COPY(*_out, *_in);
+	}
 }
 
 static void appendError(const char *_format, ...) {
