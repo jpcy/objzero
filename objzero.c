@@ -867,6 +867,7 @@ void objz_setVertexFormat(size_t _stride, size_t _positionOffset, size_t _texcoo
 }
 
 objzModel *objz_load(const char *_filename) {
+	s_error[0] = 0;
 	File file;
 	if (!fileOpen(&file, _filename)) {
 		appendError("Failed to read file '%s'", _filename);
