@@ -956,15 +956,20 @@ objzModel *objz_load(const char *_filename) {
 				object->numFaces += faces.length - prevFacesLength;
 			}
 		} else if (OBJZ_STRICMP(token.text, "g") == 0 || OBJZ_STRICMP(token.text, "o") == 0) {
+			const bool isGroup = OBJZ_STRICMP(token.text, "g") == 0;
 			tokenize(&lexer, &token, true);
-			if (token.text[0] == 0) {
-				appendError("(%u:%u) Expected name after 'g'/'o'", token.line, token.column);
-				goto error;
+			if (isGroup) {
+				// Empty group names are permitted.
+				if (token.text[0] != 0)
+					strCopy(currentGroupName, sizeof(currentGroupName), token.text, strLength(token.text, sizeof(token.text)));
 			}
-			if (OBJZ_STRICMP(token.text, "g") == 0)
-				strCopy(currentGroupName, sizeof(currentGroupName), token.text, strLength(token.text, sizeof(token.text)));
-			else
+			else {
+				if (token.text[0] == 0) {
+					appendError("(%u:%u) Expected name after 'o'", token.line, token.column);
+					goto error;
+				}
 				strCopy(currentObjectName, sizeof(currentObjectName), token.text, strLength(token.text, sizeof(token.text)));
+			}
 			TempObject o;
 			o.name[0] = 0;
 			if (currentGroupName[0] != 0)
