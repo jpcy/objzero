@@ -445,6 +445,16 @@ static bool loadMaterialFile(const char *_objFilename, const char *_materialName
 		appendError("Failed to read material file '%s'", filename);
 		return true;
 	}
+	const uint32_t *bom32 = (const uint32_t *)file.buffer;
+	if (*bom32 == 0x0000feff || *bom32 == 0xfffe0000) {
+		appendError("UTF-32 encoding not supported in file '%s'", filename);
+		return false;
+	}
+	const uint16_t *bom16 = (const uint16_t *)file.buffer;
+	if (*bom16 == 0xfffe || *bom16 == 0xfeff) {
+		appendError("UTF-16 encoding not supported in file '%s'", filename);
+		return false;
+	}
 	Lexer lexer;
 	initLexer(&lexer);
 	Token token;
@@ -872,6 +882,16 @@ objzModel *objz_load(const char *_filename) {
 	if (!fileOpen(&file, _filename)) {
 		appendError("Failed to read file '%s'", _filename);
 		return NULL;
+	}
+	const uint32_t *bom32 = (const uint32_t *)file.buffer;
+	if (*bom32 == 0x0000feff || *bom32 == 0xfffe0000) {
+		appendError("UTF-32 encoding not supported in file '%s'", _filename);
+		return false;
+	}
+	const uint16_t *bom16 = (const uint16_t *)file.buffer;
+	if (*bom16 == 0xfffe || *bom16 == 0xfeff) {
+		appendError("UTF-16 encoding not supported in file '%s'", _filename);
+		return false;
 	}
 	// Parse the obj file and any material files.
 	// Faces are triangulated. Other than that, this is straight parsing.
