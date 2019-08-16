@@ -1,3 +1,7 @@
+if _ACTION == nil then
+	return
+end
+
 solution "objzero"
 	configurations { "Release", "Debug" }
 	if _OPTIONS["cc"] ~= nil then
@@ -5,11 +9,7 @@ solution "objzero"
 	else
 		location(path.join("build", _ACTION))
 	end
-	if os.is64bit() and not os.istarget("windows") then
-		platforms { "x86_64", "x86" }
-	else
-		platforms { "x86", "x86_64" }
-	end
+	platforms { "x86_64", "x86" }
 	startproject "example"
 	filter "platforms:x86"
 		architecture "x86"
