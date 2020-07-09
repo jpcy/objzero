@@ -92,14 +92,25 @@ static void *custom_realloc(void *_ptr, size_t _size) {
 	return newPtr + 1;
 }
 
+static void progressCallback(const char *_filename, int _progress) {
+	(void)_filename; // Not used.
+	printf("\r[");
+	for (int i = 0; i < 10; i++)
+		printf(_progress / ((i + 1) * 10) ? "*" : " ");
+	printf("] %d%%", _progress);
+	fflush(stdout);
+}
+
 int main(int argc, char **argv) {
 	if (argc <= 1)
 		return 0;
 	printf("Loading '%s'\n", argv[1]);
+	objz_setProgress(progressCallback);
 	objz_setRealloc(custom_realloc);
 	clock_t start = clock();
 	objzModel *model = objz_load(argv[1]);
 	clock_t end = clock();
+	printf("\n");
 	if (!model) {
 		printf("ERROR: %s\n", objz_getError());
 		return 1;
