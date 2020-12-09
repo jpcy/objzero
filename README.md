@@ -1,6 +1,6 @@
 ## objzero
 
-[![Appveyor CI Build Status](https://ci.appveyor.com/api/projects/status/github/jpcy/objzero?branch=master&svg=true)](https://ci.appveyor.com/project/jpcy/objzero) [![Travis CI Build Status](https://travis-ci.org/jpcy/objzero.svg?branch=master)](https://travis-ci.org/jpcy/objzero) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Actions Status](https://github.com/jpcy/objzero/workflows/build/badge.svg)](https://github.com/jpcy/objzero/actions) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 A Wavefront .obj file loader written in C (C99). The API is simple. The output data is ready for graphics APIs.
 
